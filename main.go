@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 	"flag"
+	"regexp"
+	"compress/gzip"
 )
 
 type openRouterModel struct {
@@ -62,6 +64,7 @@ var (
 	cooldownMu       sync.RWMutex
 
 	debugMode        bool
+	toolRegex        = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">.*?<parameter name=\"command\">(.*?)</parameter>.*?</invoke>")
 )
 
 type cooldownEntry struct {
@@ -509,29 +512,117 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func translateResponse(body []byte) []byte {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return body
+	}
+
+	choices, ok := resp["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return body
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return body
+	}
+
+	message, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return body
+	}
+
+	content, ok := message["content"].(string)
+	if !ok || content == "" {
+		return body
+	}
+	
+	if debugMode {
+		log.Printf("[SPY] Model returned: %s", content)
+	}
+
+	matches := toolRegex.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return body
+	}
+
+	var toolCalls []map[string]interface{}
+	for _, match := range matches {
+		name := match[1]
+		command := match[2]
+
+		// Map common tool names to what opencode expects
+		toolName := name
+		if toolName == "shell" {
+			toolName = "run_terminal_command"
+		}
+
+		toolCalls = append(toolCalls, map[string]interface{}{
+			"id":   fmt.Sprintf("call_%d_%s", time.Now().Unix(), name),
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":      toolName,
+				"arguments": fmt.Sprintf("{\"command\": %q}", command),
+			},
+		})
+	}
+
+	if len(toolCalls) > 0 {
+		message["tool_calls"] = toolCalls
+		// Strip the XML from content so the agent only sees the tool call
+		newContent := toolRegex.ReplaceAllString(content, "")
+		message["content"] = strings.TrimSpace(newContent)
+		
+		log.Printf("[TRANS] Translated %d XML tool calls into OpenAI tool_calls", len(toolCalls))
+	}
+
+	newBody, err := json.Marshal(resp)
+	if err != nil {
+		return body
+	}
+	return newBody
+}
+
 func copyResponse(w http.ResponseWriter, resp *http.Response) {
+	if debugMode {
+		log.Printf("[DEBUG] Response Headers: %v", resp.Header)
+	}
+
 	for k, vv := range resp.Header {
+		if strings.ToLower(k) == "content-length" || strings.ToLower(k) == "content-encoding" {
+			continue
+		}
 		for _, v := range vv {
 			w.Header().Add(k, v)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
 	
-	flusher, ok := w.(http.Flusher)
-	buf := make([]byte, 4096)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			w.Write(buf[:n])
-			if ok {
-				flusher.Flush()
-			}
-		}
+	var reader io.ReadCloser
+	var err error
+	switch resp.Header.Get("Content-Encoding") {
+	case "gzip":
+		reader, err = gzip.NewReader(resp.Body)
 		if err != nil {
-			break
+			http.Error(w, "Failed to create gzip reader", http.StatusInternalServerError)
+			return
 		}
+		defer reader.Close()
+	default:
+		reader = resp.Body
+	}
+
+	bodyBytes, err := ioutil.ReadAll(reader)
+	if err != nil {
+		http.Error(w, "Failed to read upstream body", http.StatusInternalServerError)
+		return
 	}
 	resp.Body.Close()
+
+	translated := translateResponse(bodyBytes)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(translated)))
+	w.WriteHeader(resp.StatusCode)
+	w.Write(translated)
 }
 
 func translateSSE(w http.ResponseWriter, resp *http.Response) {
@@ -588,17 +679,32 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 			break
 		}
 		
+		if debugMode {
+			log.Printf("[RAW-SSE] %s", data)
+		}
+		
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
 			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
-						if content, ok := delta["content"].(string); ok && content != "" {
+						content, _ := delta["content"].(string)
+						reasoning, _ := delta["reasoning"].(string)
+						
+						text := content
+						if text == "" {
+							text = reasoning
+						}
+
+						if text != "" {
+							if debugMode {
+								log.Printf("[SPY-CHUNK] %s", text)
+							}
 							// 3. response.output_text.delta
 							sendEvent("response.output_text.delta", map[string]interface{}{
 								"type":    "response.output_text.delta",
 								"item_id": itemID,
-								"delta":   content,
+								"delta":   text,
 							})
 						}
 					}
@@ -677,6 +783,11 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func sanitizeBody(body map[string]interface{}) {
+	var keys []string
+	for k, v := range body {
+		keys = append(keys, fmt.Sprintf("%s(%T)", k, v))
+	}
+	log.Printf("[DEBUG] Incoming Body Types: %v", keys)
 	// 0. Handle 'input' field (OpenCode format)
 	if input, ok := body["input"].([]interface{}); ok {
 		var msgs []interface{}
@@ -743,24 +854,50 @@ func sanitizeBody(body map[string]interface{}) {
 	}
 
 	// 3. Convert 'tools' to strict OpenAI 'function' schema and remove unsupported ones
+	// The Responses API format has tools as {"type":"function","name":"shell","description":"...","parameters":{...}}
+	// The Chat Completions format wraps under {"type":"function","function":{"name":"shell",...}}
+	// We need to handle both and normalise to Chat Completions format for OpenRouter.
 	if tools, ok := body["tools"].([]interface{}); ok {
+		log.Printf("[DEBUG] Received %d tools from client", len(tools))
 		var newTools []map[string]interface{}
 		for _, t := range tools {
 			if tMap, ok := t.(map[string]interface{}); ok {
-				// OpenRouter/OpenAI models often fail on complex tool schemas (like 'Agent' or 'TaskUpdate')
-				// if they aren't perfectly formatted. We'll simplify.
-				if typeStr, ok := tMap["type"].(string); ok && typeStr == "function" {
-					if fn, ok := tMap["function"].(map[string]interface{}); ok {
-						name, _ := fn["name"].(string)
-						// Filter out internal tools that often cause validation bloat
-						if name == "Agent" || name == "TaskUpdate" || name == "TaskCreate" {
-							continue
-						}
-						newTools = append(newTools, tMap)
-					}
+				typeStr, _ := tMap["type"].(string)
+				if typeStr != "function" {
+					continue
 				}
+
+				var name string
+				var fn map[string]interface{}
+
+				if nested, ok := tMap["function"].(map[string]interface{}); ok {
+					// Chat Completions format: name nested under "function"
+					fn = nested
+					name, _ = fn["name"].(string)
+				} else if topName, ok := tMap["name"].(string); ok {
+					// Responses API format: name at top level — convert to Chat Completions format
+					name = topName
+					fn = map[string]interface{}{
+						"name":        name,
+						"description": tMap["description"],
+						"parameters":  tMap["parameters"],
+					}
+					tMap = map[string]interface{}{
+						"type":     "function",
+						"function": fn,
+					}
+				} else {
+					continue
+				}
+
+				// Filter out internal tools that cause validation bloat
+				if name == "Agent" || name == "TaskUpdate" || name == "TaskCreate" || name == "TaskCreate_deprecated" {
+					continue
+				}
+				newTools = append(newTools, tMap)
 			}
 		}
+		log.Printf("[DEBUG] Passing %d tools to model after filtering", len(newTools))
 		if len(newTools) > 0 {
 			body["tools"] = newTools
 		} else {
