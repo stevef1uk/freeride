@@ -33,11 +33,19 @@ type openRouterModel struct {
 	Created             int64    `json:"created"`
 }
 
+type nvidiaModel struct {
+	ID          string `json:"id"`
+	Object      string `json:"object"`
+	Created    int    `json:"created"`
+	OwnedBy    string `json:"owned_by"`
+	Permission interface{} `json:"permission"`
+}
+
 type ollamaModelDetails struct {
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
 	Families          []string `json:"families"`
-	ParameterSize     string   `json:"parameter_size"`
+	ParameterSize    string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
@@ -56,6 +64,7 @@ type ollamaTagsResponse struct {
 
 var (
 	cachedFreeModels []openRouterModel
+	cachedNvidiaModels []nvidiaModel
 	cacheMutex       sync.RWMutex
 	cacheTime        time.Time
 	cacheTTL         = 1 * time.Hour
@@ -193,6 +202,60 @@ func fetchFreeModels() ([]openRouterModel, error) {
 	cacheTime = time.Now()
 	cacheMutex.Unlock()
 
+	return freeModels, nil
+}
+
+func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
+	cacheMutex.RLock()
+	if time.Since(cacheTime) < cacheTTL && len(cachedNvidiaModels) > 0 {
+		models := cachedNvidiaModels
+		cacheMutex.RUnlock()
+		return models, nil
+	}
+	cacheMutex.RUnlock()
+
+	apiKey := os.Getenv("NVIDIA_API_KEY")
+	if apiKey == "" {
+		log.Printf("[DEBUG] NVIDIA_API_KEY not set, skipping NVIDIA models")
+		return nil, nil
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), "GET", "https://integrate.api.nvidia.com/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("NVIDIA API returned status %d", resp.StatusCode)
+	}
+
+	var wrapper struct {
+		Data []nvidiaModel `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, err
+	}
+
+	var freeModels []nvidiaModel
+	for _, m := range wrapper.Data {
+		// Include NVIDIA-owned models (they're available via NGC credits/API)
+		if strings.HasPrefix(m.ID, "nvidia/") || strings.HasPrefix(m.ID, "nv-mistralai/") || strings.HasPrefix(m.ID, "mistralai/") {
+			freeModels = append(freeModels, m)
+		}
+	}
+
+	cacheMutex.Lock()
+	cachedNvidiaModels = freeModels
+	cacheMutex.Unlock()
+
+	log.Printf("[DEBUG] Fetched %d free NVIDIA models", len(freeModels))
 	return freeModels, nil
 }
 
@@ -376,11 +439,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models, _ := fetchFreeModels()
-	
-	// Build candidates list (prioritizing the requested model ONLY if it is a known free model)
+	nvidiaModels, _ := fetchNvidiaFreeModels()
+
+	// Build candidates list from BOTH OpenRouter AND NVIDIA free models
 	var candidates []string
 	isFree := false
+
+	// Check OpenRouter models
 	for _, m := range models {
+		if m.ID == originalModel {
+			isFree = true
+			break
+		}
+	}
+	// Also check NVIDIA models
+	for _, m := range nvidiaModels {
 		if m.ID == originalModel {
 			isFree = true
 			break
@@ -390,25 +463,50 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if originalModel != "" && isFree && !isCooldown(originalModel) {
 		candidates = append(candidates, originalModel)
 	}
+	// Add OpenRouter free models
 	for _, m := range models {
 		if m.ID != originalModel && !isCooldown(m.ID) {
 			candidates = append(candidates, m.ID)
 		}
 	}
+	// Add NVIDIA free models
+	for _, m := range nvidiaModels {
+		if m.ID != originalModel && !isCooldown(m.ID) {
+			candidates = append(candidates, m.ID)
+		}
+	}
 
-	// If all are in cooldown, just try the original or highest rank as a last resort
+	// If all are in cooldown, only try free models - never fall back to paid models
 	if len(candidates) == 0 {
-		if originalModel != "" {
-			candidates = append(candidates, originalModel)
-		} else if len(models) > 0 {
+		if len(models) > 0 && !isCooldown(models[0].ID) {
 			candidates = append(candidates, models[0].ID)
+		} else if len(nvidiaModels) > 0 && !isCooldown(nvidiaModels[0].ID) {
+			candidates = append(candidates, nvidiaModels[0].ID)
 		} else {
-			http.Error(w, "No models available", http.StatusServiceUnavailable)
+			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
+			http.Error(w, "All free models are in cooldown. Please try again later.", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	for i, candidate := range candidates {
-		targetURL := "https://openrouter.ai/api/v1/chat/completions"
+		// Determine which API to use based on model prefix
+		var targetURL string
+		var apiKey string
+
+		if strings.HasPrefix(candidate, "nvidia/") || strings.HasPrefix(candidate, "nvidia/") {
+			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
+			apiKey = os.Getenv("NVIDIA_API_KEY")
+		} else {
+			targetURL = "https://openrouter.ai/api/v1/chat/completions"
+			apiKey = os.Getenv("OPENROUTER_API_KEY")
+		}
+
+		if apiKey == "" {
+			log.Printf("[ERROR] Required API key not set for %s", candidate)
+			markCooldown(candidate)
+			continue
+		}
+
 		var outboundBody []byte
 		
 		if bodyMap != nil {
@@ -431,6 +529,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			
 			currentBody["model"] = candidate
+			// Strip :free suffix for NVIDIA models (they don't use it)
+			if strings.HasPrefix(candidate, "nvidia/") || strings.HasPrefix(candidate, "nv-") || strings.HasPrefix(candidate, "mistralai/") {
+				currentBody["model"] = strings.TrimSuffix(candidate, ":free")
+			}
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)
 			

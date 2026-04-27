@@ -1,13 +1,14 @@
 # Freeride Proxy
 
-This is a stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from OpenRouter using the `freeride` capability logic.
+This is a stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from both **OpenRouter** and **NVIDIA (NIM)** using the `freeride` capability logic.
 
 It runs locally on port `:11434` (Ollama's default port), intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`). 
 
 ## Prerequisites
 
 - Go 1.15+ (The proxy has been adapted to build cleanly with older Go versions, though a modern version is recommended).
-- An OpenRouter API key.
+- An **OpenRouter API key**.
+- An **NVIDIA API key** (optional, but highly recommended for accessing high-performance NIM models).
 
 ## Building and Running
 
@@ -16,9 +17,10 @@ It runs locally on port `:11434` (Ollama's default port), intercepting requests 
    go build
    ```
 
-2. Run the proxy with your OpenRouter API key:
+2. Run the proxy with your API keys:
    ```bash
    export OPENROUTER_API_KEY="sk-or-v1-..."
+   export NVIDIA_API_KEY="nvapi-..."
    ./freeride
    ```
 
@@ -89,18 +91,18 @@ gt up
 
 ## Supported Endpoints
 
-- `GET /api/tags`: Lists available free models from OpenRouter (formatted as Ollama tags).
+- `GET /api/tags`: Lists available free models from OpenRouter and NVIDIA (formatted as Ollama tags).
 - `GET /api/version`: Returns a dummy Ollama version for compatibility.
 - `POST /v1/chat/completions`: Standard OpenAI chat endpoint.
 - `POST /v1/responses`: Specialized OpenCode "Beads" protocol endpoint (with full SSE translation).
 - `POST /v1/messages`: Anthropic Messages endpoint (currently non-streaming only).
-- `GET /v1/models`: Returns the current ranked list of free models.
+- `GET /v1/models`: Returns the current ranked list of all available free models.
 
 ## Auto-Recovery & Cooldown
 
-The proxy features transparent, proxy-level auto-recovery. 
+The proxy features transparent, proxy-level auto-recovery across multiple providers. 
 
-If Gastown (or any CLI) makes a request to a free model and OpenRouter returns a rate limit (429) or server error (5xx), the proxy automatically intercepts the failure, places the failing model in cooldown using exponential backoff (1 min, 5 min, 25 min, up to 1 hour), and retries the exact same request using the next highest-ranked free model in the cache. 
+If Gastown (or any CLI) makes a request to a free model and either OpenRouter or NVIDIA returns a rate limit (429) or server error (5xx), the proxy automatically intercepts the failure, places the failing model in cooldown using exponential backoff (1 min, 5 min, 25 min, up to 1 hour), and retries the exact same request using the next highest-ranked free model in the combined cache. 
 
 This happens completely transparently without dropping the connection, ensuring agents never stall due to upstream free-tier limits!
 
