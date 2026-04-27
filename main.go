@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -130,11 +129,15 @@ func max(a, b int) int {
 }
 
 func calculateStandardCooldown(errorCount int) time.Duration {
+	// More aggressive recovery - shorter cooldowns
+	// Error 1: 10s, Error 2: 30s, Error 3+: 60s max
 	n := max(1, errorCount)
-	exp := min(n-1, 3)
-	ms := 60_000 * int(math.Pow(5, float64(exp)))
-	ms = min(3_600_000, ms) // cap at 1 hour
-	return time.Duration(ms) * time.Millisecond
+	if n == 1 {
+		return 10 * time.Second
+	} else if n == 2 {
+		return 30 * time.Second
+	}
+	return 60 * time.Second // cap at 1 minute
 }
 
 // ... fetchFreeModels, scoreModel, handleTags, handleVersion, handleOllamaChat existing ...
@@ -529,10 +532,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			
 			currentBody["model"] = candidate
-			// Strip :free suffix for NVIDIA models (they don't use it)
-			if strings.HasPrefix(candidate, "nvidia/") || strings.HasPrefix(candidate, "nv-") || strings.HasPrefix(candidate, "mistralai/") {
-				currentBody["model"] = strings.TrimSuffix(candidate, ":free")
-			}
+			// Strip :free suffix (provider doesn't use it)
+			currentBody["model"] = strings.TrimSuffix(candidate, ":free")
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)
 			
@@ -583,6 +584,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
+		// Don't cooldown on 404 (model not found) - just skip it
 		if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 			log.Printf("Model %s returned status %d. Marking in cooldown...", candidate, resp.StatusCode)
 			markCooldown(candidate)
@@ -599,8 +601,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		log.Printf("Model %s succeeded (status %d). Returning response to client.", candidate, resp.StatusCode)
-		markSuccess(candidate)
+		// Log success only for 2xx
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Printf("Model %s succeeded (status %d). Returning response to client.", candidate, resp.StatusCode)
+			markSuccess(candidate)
+		} else {
+			log.Printf("Model %s returned status %d. Skipping (not cooling down).", candidate, resp.StatusCode)
+		}
 		
 		// Only translate SSE if it's a successful response
 		if (r.URL.Path == "/v1/responses") && resp.StatusCode == 200 {
@@ -1052,10 +1059,28 @@ func handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "/api/chat is not fully implemented in the Freeride proxy. Please configure your client to use the OpenAI compatibility endpoint at /v1/chat/completions.", http.StatusNotImplemented)
 }
 
+func cleanStaleCooldowns() {
+	cooldownMu.Lock()
+	defer cooldownMu.Unlock()
+	now := time.Now()
+	cleaned := 0
+	for k, v := range cooldowns {
+		if now.After(v.CooldownEnd) {
+			delete(cooldowns, k)
+			cleaned++
+		}
+	}
+	if cleaned > 0 {
+		log.Printf("[DEBUG] Cleaned %d stale cooldowns", cleaned)
+	}
+}
+
 func main() {
 	flag.BoolVar(&debugMode, "debug", false, "Enable verbose debug logging")
 	flag.Parse()
 
+	// Clean up stale cooldowns on startup
+	cleanStaleCooldowns()
 	loadCooldowns()
 
 	port := os.Getenv("PORT")
