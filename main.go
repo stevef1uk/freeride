@@ -501,9 +501,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			apiKey = os.Getenv("OPENROUTER_API_KEY")
 		}
 
+		// Skip models that need missing API keys (don't cooldown - might be available later)
 		if apiKey == "" {
-			log.Printf("[ERROR] Required API key not set for %s", candidate)
-			markCooldown(candidate)
+			log.Printf("[DEBUG] Skipping %s - API key not available", candidate)
 			continue
 		}
 
