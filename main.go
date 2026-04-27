@@ -245,8 +245,9 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 
 	var freeModels []nvidiaModel
 	for _, m := range wrapper.Data {
-		// Include NVIDIA-owned models (they're available via NGC credits/API)
-		if strings.HasPrefix(m.ID, "nvidia/") || strings.HasPrefix(m.ID, "nv-mistralai/") || strings.HasPrefix(m.ID, "mistralai/") {
+		lowerID := strings.ToLower(m.ID)
+		// Only include chat/instruct models (not embeddings, translators, vision-only, safety, etc)
+		if strings.HasPrefix(m.ID, "nvidia/") && !strings.Contains(lowerID, "embed") && !strings.Contains(lowerID, "safety") && !strings.Contains(lowerID, "guard") && !strings.Contains(lowerID, "clip") && !strings.Contains(lowerID, "vila") && !strings.Contains(lowerID, "riva") && !strings.Contains(lowerID, "calibration") && !strings.Contains(lowerID, "pixel") && !strings.Contains(lowerID, "neva") && strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron") {
 			freeModels = append(freeModels, m)
 		}
 	}
@@ -405,11 +406,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		http.Error(w, "OPENROUTER_API_KEY not set in environment", http.StatusInternalServerError)
-		return
-	}
+	// API key check moved to after model selection (per-provider)
 
 	bodyBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -478,10 +475,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// If all are in cooldown, only try free models - never fall back to paid models
 	if len(candidates) == 0 {
+		log.Printf("[DEBUG] candidates empty, checking models: or=%s len(models)=%d len(nvidiaModels)=%d", originalModel, len(models), len(nvidiaModels))
 		if len(models) > 0 && !isCooldown(models[0].ID) {
 			candidates = append(candidates, models[0].ID)
+			log.Printf("[DEBUG] using OpenRouter fallback: %s", models[0].ID)
 		} else if len(nvidiaModels) > 0 && !isCooldown(nvidiaModels[0].ID) {
 			candidates = append(candidates, nvidiaModels[0].ID)
+			log.Printf("[DEBUG] using NVIDIA fallback: %s", nvidiaModels[0].ID)
 		} else {
 			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
 			http.Error(w, "All free models are in cooldown. Please try again later.", http.StatusServiceUnavailable)
@@ -582,8 +582,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Fallback on Bad Request (400 - validation errors), Payment (402), Rate Limit (429) or Server Errors (5xx)
-		if resp.StatusCode == 400 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
+		if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 			log.Printf("Model %s returned status %d. Marking in cooldown...", candidate, resp.StatusCode)
 			markCooldown(candidate)
 			
@@ -859,6 +859,8 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	models, _ := fetchFreeModels()
+	nvidiaModels, _ := fetchNvidiaFreeModels()
+
 	type openAIModel struct {
 		ID      string `json:"id"`
 		Object  string `json:"object"`
@@ -876,6 +878,15 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 			Object:  "model",
 			Created: m.Created,
 			OwnedBy: "openrouter",
+		})
+	}
+	// Add NVIDIA models
+	for _, m := range nvidiaModels {
+		res.Data = append(res.Data, openAIModel{
+			ID:      m.ID,
+			Object:  "model",
+			Created: int64(m.Created),
+			OwnedBy: "nvidia",
 		})
 	}
 	res.Data = append(res.Data, openAIModel{ID: "gpt-4o", Object: "model", Created: 1678888888, OwnedBy: "openai"})
