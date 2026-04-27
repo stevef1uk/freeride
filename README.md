@@ -58,11 +58,33 @@ GitHub Copilot is highly proprietary and uses internal authentication that often
 
 ### 5. Gastown
 **Status: Fully Supported**
-Gastown agents can use this proxy as a cost-free backend for all model inference.
+Gastown agents can use this proxy as a cost-free backend for all model inference. Configure your town by editing `settings/config.json`:
+
+```json
+{
+  "type": "town-settings",
+  "version": 1,
+  "default_agent": "freecode",
+  "agents": {
+    "freecode": {
+      "provider": "openai",
+      "command": "env",
+      "args": [
+        "OPENAI_BASE_URL=http://localhost:11434/v1",
+        "OPENAI_API_KEY=dummy",
+        "opencode",
+        "--model",
+        "openai/gpt-4o",
+        "run"
+      ]
+    }
+  }
+}
+```
+
+Then bring up the infrastructure:
 ```bash
-export ANTHROPIC_BASE_URL="http://localhost:11434"
-export ANTHROPIC_API_KEY="dummy_key"
-gt start
+gt up
 ```
 
 ## Supported Endpoints
