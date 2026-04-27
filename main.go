@@ -477,8 +477,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Fallback on Rate Limit (429) or Server Errors (5xx)
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		// Fallback on Bad Request (400 - validation errors), Payment (402), Rate Limit (429) or Server Errors (5xx)
+		if resp.StatusCode == 400 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 			log.Printf("Model %s returned status %d. Marking in cooldown...", candidate, resp.StatusCode)
 			markCooldown(candidate)
 			
@@ -497,9 +497,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Model %s succeeded (status %d). Returning response to client.", candidate, resp.StatusCode)
 		markSuccess(candidate)
 		
-		// Only translate SSE if it's a successful response to /v1/responses
-		if r.URL.Path == "/v1/responses" && resp.StatusCode == 200 {
+		// Only translate SSE if it's a successful response
+		if (r.URL.Path == "/v1/responses") && resp.StatusCode == 200 {
 			translateSSE(w, resp)
+		} else if (r.URL.Path == "/v1/messages" || r.URL.Path == "/api/v1/messages") && resp.StatusCode == 200 {
+			translateAnthropicSSE(w, resp)
 		} else {
 			copyResponse(w, resp)
 		}
@@ -740,45 +742,30 @@ func sanitizeBody(body map[string]interface{}) {
 		}
 	}
 
-	// 3. Convert 'tools' to strict OpenAI 'function' schema
+	// 3. Convert 'tools' to strict OpenAI 'function' schema and remove unsupported ones
 	if tools, ok := body["tools"].([]interface{}); ok {
 		var newTools []map[string]interface{}
 		for _, t := range tools {
 			if tMap, ok := t.(map[string]interface{}); ok {
-				// Check if it's already strictly formatted
-				_, hasFunction := tMap["function"]
-				if hasFunction {
-					newTools = append(newTools, tMap)
-					continue
-				}
-
-				// Otherwise, wrap it
-				name, _ := tMap["name"].(string)
-				desc, _ := tMap["description"].(string)
-				params := tMap["parameters"]
-				if params == nil {
-					params = tMap["input_schema"]
-				}
-
-				// Strip $schema if present
-				if pMap, ok := params.(map[string]interface{}); ok {
-					delete(pMap, "$schema")
-					params = pMap
-				}
-
-				if name != "" {
-					newTools = append(newTools, map[string]interface{}{
-						"type": "function",
-						"function": map[string]interface{}{
-							"name":        name,
-							"description": desc,
-							"parameters":  params,
-						},
-					})
+				// OpenRouter/OpenAI models often fail on complex tool schemas (like 'Agent' or 'TaskUpdate')
+				// if they aren't perfectly formatted. We'll simplify.
+				if typeStr, ok := tMap["type"].(string); ok && typeStr == "function" {
+					if fn, ok := tMap["function"].(map[string]interface{}); ok {
+						name, _ := fn["name"].(string)
+						// Filter out internal tools that often cause validation bloat
+						if name == "Agent" || name == "TaskUpdate" || name == "TaskCreate" {
+							continue
+						}
+						newTools = append(newTools, tMap)
+					}
 				}
 			}
 		}
-		body["tools"] = newTools
+		if len(newTools) > 0 {
+			body["tools"] = newTools
+		} else {
+			delete(body, "tools")
+		}
 	}
 
 	// 4. Strip other Anthropic-specific fields
@@ -786,6 +773,16 @@ func sanitizeBody(body map[string]interface{}) {
 	delete(body, "metadata")
 	delete(body, "output_config")
 	delete(body, "anthropic-version")
+
+	// 5. Cap max_tokens to prevent context overflow (OpenRouter free models often have 32k limits)
+	if mt, ok := body["max_tokens"].(float64); ok {
+		if mt > 4096 {
+			body["max_tokens"] = 4096
+		}
+	} else if _, ok := body["max_tokens"]; !ok {
+		// Default to 4096 if not specified, to be safe
+		body["max_tokens"] = 4096
+	}
 
 	// 5. Convert 'prompt' to a user message (OpenCode legacy support)
 	if prompt, ok := body["prompt"].(string); ok && prompt != "" {
@@ -833,5 +830,106 @@ func main() {
 	log.Printf("Starting Freeride Ollama proxy with Auto-Fallback on port %s...", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatalf("Server failed: %v", err)
+	}
+}
+
+func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, _ := w.(http.Flusher)
+	respID := "msg_" + fmt.Sprintf("%d", time.Now().Unix())
+
+	// 1. message_start
+	sendAnthropicEvent(w, flusher, "message_start", map[string]interface{}{
+		"type": "message_start",
+		"message": map[string]interface{}{
+			"id":   respID,
+			"type": "message",
+			"role": "assistant",
+			"content": []interface{}{},
+			"model": "claude-3-5-sonnet-20241022",
+			"usage": map[string]interface{}{
+				"input_tokens":  0,
+				"output_tokens": 0,
+			},
+		},
+	})
+
+	// 2. content_block_start
+	sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
+		"type": "content_block_start",
+		"index": 0,
+		"content_block": map[string]interface{}{
+			"type": "text",
+			"text": "",
+		},
+	})
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" || !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]interface{}); ok {
+					if delta, ok := choice["delta"].(map[string]interface{}); ok {
+						if content, ok := delta["content"].(string); ok && content != "" {
+							// 3. content_block_delta
+							sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
+								"type": "content_block_delta",
+								"index": 0,
+								"delta": map[string]interface{}{
+									"type": "text_delta",
+									"text": content,
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 4. content_block_stop
+	sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
+		"type": "content_block_stop",
+		"index": 0,
+	})
+
+	// 5. message_delta
+	sendAnthropicEvent(w, flusher, "message_delta", map[string]interface{}{
+		"type": "message_delta",
+		"delta": map[string]interface{}{
+			"stop_reason": "end_turn",
+			"stop_sequence": nil,
+		},
+		"usage": map[string]interface{}{
+			"output_tokens": 0,
+		},
+	})
+
+	// 6. message_stop
+	sendAnthropicEvent(w, flusher, "message_stop", map[string]interface{}{
+		"type": "message_stop",
+	})
+
+	resp.Body.Close()
+}
+
+func sendAnthropicEvent(w http.ResponseWriter, flusher http.Flusher, evType string, data interface{}) {
+	b, _ := json.Marshal(data)
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evType, string(b))
+	if flusher != nil {
+		flusher.Flush()
 	}
 }
