@@ -29,8 +29,8 @@ It runs locally on port `:11434` (Ollama's default port), intercepting requests 
 Because Freeride automatically translates requests and strips out hardcoded model requirements, you can trick most popular AI coding assistants into using it as their backend for 100% free, auto-recovering inference.
 
 ### 1. Claude Code
-**Status: Experimental (No Stream Support Yet)**
-Claude Code strictly uses the Anthropic SDK. While Freeride intercepts the `/v1/messages` endpoint, **streaming is currently broken** because Claude Code expects Anthropic-formatted SSE events, while the proxy's fallback models return OpenAI format. 
+**Status: Fully Supported (with Streaming)**
+Claude Code strictly uses the Anthropic SDK. Freeride includes a full SSE translator that converts standard OpenAI streams into Anthropic-formatted events (`message_start`, `content_block_delta`, etc.). This allows Claude Code to work perfectly with free models while maintaining its native streaming experience.
 ```bash
 export ANTHROPIC_BASE_URL="http://localhost:11434"
 export ANTHROPIC_API_KEY="dummy_key"
@@ -84,6 +84,8 @@ Gastown agents can use this proxy as a cost-free backend for all model inference
 }
 ```
 
+**Note**: Freeride specifically supports the **Beads protocol** used by OpenCode agents. Requests to `/v1/responses` are automatically translated into the correct event stream format (`response.output_text.delta`).
+
 Then bring up the infrastructure:
 ```bash
 gt up
@@ -95,7 +97,7 @@ gt up
 - `GET /api/version`: Returns a dummy Ollama version for compatibility.
 - `POST /v1/chat/completions`: Standard OpenAI chat endpoint.
 - `POST /v1/responses`: Specialized OpenCode "Beads" protocol endpoint (with full SSE translation).
-- `POST /v1/messages`: Anthropic Messages endpoint (currently non-streaming only).
+- `POST /v1/messages` & `POST /api/v1/messages`: Anthropic Messages endpoint (with full SSE streaming translation).
 - `GET /v1/models`: Returns the current ranked list of all available free models.
 
 ## Auto-Recovery & Cooldown
@@ -107,3 +109,12 @@ If Gastown (or any CLI) makes a request to a free model and either OpenRouter or
 This happens completely transparently without dropping the connection, ensuring agents never stall due to upstream free-tier limits!
 
 **State Persistence**: The proxy saves all active cooldowns and error counts to a local `cooldowns.json` file. If the proxy is restarted, it will automatically reload this file so it remembers which models are still in the penalty box.
+
+## Advanced Sanitization & Ranking
+
+Freeride does more than just proxy; it actively "fixes" requests to ensure they work on free models:
+
+- **Schema Translation**: Automatically converts complex tool schemas (like those from the Gastown Responses API) into standard OpenAI function calls.
+- **Payload Cleaning**: Strips Anthropic-specific metadata, flattens content blocks, and converts `system` parameters into system messages.
+- **Safety Caps**: Automatically caps `max_tokens` at 4096 and strips unsupported parameters to prevent 400 errors from upstream providers.
+- **Intelligent Ranking**: Models are scored based on context length, tool support, and recency. Highly reliable models like **Gemini 2.0 Flash** receive a massive boost to ensure they are used first.
