@@ -1044,31 +1044,39 @@ func sanitizeBody(body map[string]interface{}) {
 		var newTools []map[string]interface{}
 		for _, t := range tools {
 			if tMap, ok := t.(map[string]interface{}); ok {
-				typeStr, _ := tMap["type"].(string)
-				if typeStr != "function" {
-					continue
-				}
-
 				var name string
 				var fn map[string]interface{}
 
+				// Case 1: OpenAI Chat Completions format (already correct)
 				if nested, ok := tMap["function"].(map[string]interface{}); ok {
-					// Chat Completions format: name nested under "function"
 					fn = nested
 					name, _ = fn["name"].(string)
-				} else if topName, ok := tMap["name"].(string); ok {
-					// Responses API format: name at top level — convert to Chat Completions format
-					name = topName
-					fn = map[string]interface{}{
-						"name":        name,
-						"description": tMap["description"],
-						"parameters":  tMap["parameters"],
-					}
-					tMap = map[string]interface{}{
-						"type":     "function",
-						"function": fn,
-					}
 				} else {
+					// Case 2: Anthropic format (name, description, input_schema) 
+					// or legacy Responses API format (name, description, parameters)
+					name, _ = tMap["name"].(string)
+					description, _ := tMap["description"].(string)
+					
+					params := tMap["parameters"]
+					if params == nil {
+						params = tMap["input_schema"] // Map Anthropic input_schema to OpenAI parameters
+					}
+
+					if name != "" {
+						fn = map[string]interface{}{
+							"name":        name,
+							"description": description,
+							"parameters":  params,
+						}
+						// Wrap in the standard OpenAI function structure
+						tMap = map[string]interface{}{
+							"type":     "function",
+							"function": fn,
+						}
+					}
+				}
+
+				if name == "" {
 					continue
 				}
 
@@ -1225,6 +1233,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 		},
 	})
 
+	maxIndex := 0
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1256,7 +1265,11 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
 							for _, tc := range toolCalls {
 								if tcMap, ok := tc.(map[string]interface{}); ok {
-									index, _ := tcMap["index"].(float64)
+									idx, _ := tcMap["index"].(float64)
+									index := int(idx) + 1
+									if index > maxIndex {
+										maxIndex = index
+									}
 									if fn, ok := tcMap["function"].(map[string]interface{}); ok {
 										name, _ := fn["name"].(string)
 										args, _ := fn["arguments"].(string)
@@ -1266,7 +1279,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 											id, _ := tcMap["id"].(string)
 											sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
 												"type": "content_block_start",
-												"index": int(index) + 1, // Anthropic blocks start at 0 (text) + N (tools)
+												"index": index,
 												"content_block": map[string]interface{}{
 													"type": "tool_use",
 													"id":   id,
@@ -1280,7 +1293,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 										if args != "" {
 											sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
 												"type": "content_block_delta",
-												"index": int(index) + 1,
+												"index": index,
 												"delta": map[string]interface{}{
 													"type": "input_json_delta",
 													"partial_json": args,
@@ -1297,11 +1310,13 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 		}
 	}
 
-	// 4. content_block_stop
-	sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
-		"type": "content_block_stop",
-		"index": 0,
-	})
+	// 4. content_block_stop for ALL blocks
+	for i := 0; i <= maxIndex; i++ {
+		sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
+			"type": "content_block_stop",
+			"index": i,
+		})
+	}
 
 	// 5. message_delta
 	sendAnthropicEvent(w, flusher, "message_delta", map[string]interface{}{
