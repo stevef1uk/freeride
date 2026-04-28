@@ -176,16 +176,9 @@ func fetchFreeModels() ([]openRouterModel, error) {
 	var freeModels []openRouterModel
 	for _, m := range wrapper.Data {
 		if m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00" {
-			hasTools := false
-			for _, p := range m.SupportedParameters {
-				if p == "tools" {
-					hasTools = true
-					break
-				}
-			}
-			if !hasTools {
-				continue
-			}
+			// Loosen tool check - many models support tools but don't advertise it in metadata
+			/*
+			*/
 
 			lowerID := strings.ToLower(m.ID)
 			if strings.Contains(lowerID, "lyria") || strings.Contains(lowerID, "liquid") {
@@ -487,7 +480,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[DEBUG] using NVIDIA fallback: %s", nvidiaModels[0].ID)
 		} else {
 			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
-			http.Error(w, "All free models are in cooldown. Please try again later.", http.StatusServiceUnavailable)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
 			return
 		}
 	}
