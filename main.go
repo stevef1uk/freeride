@@ -72,7 +72,8 @@ var (
 	cooldownMu sync.RWMutex
 
 	debugMode bool
-	toolRegex = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">.*?<parameter name=\"command\">(.*?)</parameter>.*?</invoke>")
+	toolRegex = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
+	paramRegex = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
 )
 
 type cooldownEntry struct {
@@ -212,8 +213,14 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 
 	apiKey := os.Getenv("NVIDIA_API_KEY")
 	if apiKey == "" {
-		log.Printf("[DEBUG] NVIDIA_API_KEY not set, skipping NVIDIA models")
-		return nil, nil
+		log.Printf("[DEBUG] NVIDIA_API_KEY not set, using static list for OpenRouter fallback")
+		return []nvidiaModel{
+			{ID: "nvidia/nemotron-3-super-120b-a12b"},
+			{ID: "nvidia/nemotron-nano-9b-v2"},
+			{ID: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"},
+			{ID: "nvidia/nemotron-3-nano-30b-a3b"},
+			{ID: "nvidia/nemotron-nano-12b-v2-vl"},
+		}, nil
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", "https://integrate.api.nvidia.com/v1/models", nil)
@@ -604,11 +611,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
-		// Don't cooldown on 404 (model not found) - just skip it
-		if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
-			log.Printf("Model %s returned status %d. Marking in cooldown...", candidate, resp.StatusCode)
-			markCooldown(candidate)
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("Model %s returned status %d. Target: %s", candidate, resp.StatusCode, targetURL)
+			
+			// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
+			// Don't cooldown on 404 (model not found) - just skip it
+			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
+				markCooldown(candidate)
+			}
 
 			// Discard body so connection can be reused
 			io.Copy(ioutil.Discard, resp.Body)
@@ -686,7 +696,16 @@ func translateResponse(body []byte) []byte {
 	var toolCalls []map[string]interface{}
 	for _, match := range matches {
 		name := match[1]
-		command := match[2]
+		paramsRaw := match[2]
+
+		// Parse parameters into a map
+		args := make(map[string]interface{})
+		paramMatches := paramRegex.FindAllStringSubmatch(paramsRaw, -1)
+		for _, pm := range paramMatches {
+			pName := pm[1]
+			pValue := pm[2]
+			args[pName] = pValue
+		}
 
 		// Map common tool names to what opencode expects
 		toolName := name
@@ -694,12 +713,14 @@ func translateResponse(body []byte) []byte {
 			toolName = "run_terminal_command"
 		}
 
+		argsJSON, _ := json.Marshal(args)
+
 		toolCalls = append(toolCalls, map[string]interface{}{
 			"id":   fmt.Sprintf("call_%d_%s", time.Now().Unix(), name),
 			"type": "function",
 			"function": map[string]interface{}{
 				"name":      toolName,
-				"arguments": fmt.Sprintf("{\"command\": %q}", command),
+				"arguments": string(argsJSON),
 			},
 		})
 	}
