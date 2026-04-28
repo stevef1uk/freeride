@@ -571,14 +571,37 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
 
-		log.Printf("Attempting request with model: %s", candidate)
+		log.Printf("Attempting request with model: %s (via %s)", candidate, targetURL)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			log.Printf("Request to %s failed: %v", candidate, err)
 			markCooldown(candidate)
 			continue
+		}
+
+		if resp.StatusCode == 401 && strings.Contains(targetURL, "nvidia.com") {
+			log.Printf("[WARN] NVIDIA direct API returned 401. Falling back to OpenRouter for %s...", candidate)
+			io.Copy(ioutil.Discard, resp.Body)
+			resp.Body.Close()
+
+			// Retry via OpenRouter
+			targetURL = "https://openrouter.ai/api/v1/chat/completions"
+			apiKey = os.Getenv("OPENROUTER_API_KEY")
+			if apiKey == "" { apiKey = os.Getenv("OPENAI_API_KEY") }
+
+			req, _ = http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewBuffer(outboundBody))
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
+			resp, err = http.DefaultClient.Do(req)
+			if err != nil {
+				log.Printf("Fallback to OpenRouter for %s failed: %v", candidate, err)
+				markCooldown(candidate)
+				continue
+			}
 		}
 
 		// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
