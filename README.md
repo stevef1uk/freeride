@@ -99,7 +99,7 @@ Gastown agents can use this proxy as a cost-free backend for all model inference
 
 ```json
 {
-  "type": "town-settings",
+  "type": "rig",
   "version": 1,
   "default_agent": "freecode",
   "agents": {
@@ -107,12 +107,9 @@ Gastown agents can use this proxy as a cost-free backend for all model inference
       "provider": "openai",
       "command": "env",
       "args": [
-        "OPENAI_BASE_URL=http://localhost:11434/v1",
-        "OPENAI_API_KEY=dummy",
-        "opencode",
-        "--model",
-        "openai/gpt-4o",
-        "run"
+        "ANTHROPIC_BASE_URL=http://localhost:11434",
+        "ANTHROPIC_API_KEY=sk-ant-dummy",
+        "claude"
       ]
     }
   }
