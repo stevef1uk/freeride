@@ -3,21 +3,21 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"flag"
-	"regexp"
-	"compress/gzip"
 )
 
 type openRouterModel struct {
@@ -33,10 +33,10 @@ type openRouterModel struct {
 }
 
 type nvidiaModel struct {
-	ID          string `json:"id"`
-	Object      string `json:"object"`
-	Created    int    `json:"created"`
-	OwnedBy    string `json:"owned_by"`
+	ID         string      `json:"id"`
+	Object     string      `json:"object"`
+	Created    int         `json:"created"`
+	OwnedBy    string      `json:"owned_by"`
 	Permission interface{} `json:"permission"`
 }
 
@@ -44,7 +44,7 @@ type ollamaModelDetails struct {
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
 	Families          []string `json:"families"`
-	ParameterSize    string   `json:"parameter_size"`
+	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
@@ -62,17 +62,17 @@ type ollamaTagsResponse struct {
 }
 
 var (
-	cachedFreeModels []openRouterModel
+	cachedFreeModels   []openRouterModel
 	cachedNvidiaModels []nvidiaModel
-	cacheMutex       sync.RWMutex
-	cacheTime        time.Time
-	cacheTTL         = 1 * time.Hour
+	cacheMutex         sync.RWMutex
+	cacheTime          time.Time
+	cacheTTL           = 1 * time.Hour
 
-	cooldowns        = make(map[string]*cooldownEntry)
-	cooldownMu       sync.RWMutex
+	cooldowns  = make(map[string]*cooldownEntry)
+	cooldownMu sync.RWMutex
 
-	debugMode        bool
-	toolRegex        = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">.*?<parameter name=\"command\">(.*?)</parameter>.*?</invoke>")
+	debugMode bool
+	toolRegex = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">.*?<parameter name=\"command\">(.*?)</parameter>.*?</invoke>")
 )
 
 type cooldownEntry struct {
@@ -502,6 +502,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else {
 			targetURL = "https://openrouter.ai/api/v1/chat/completions"
 			apiKey = os.Getenv("OPENROUTER_API_KEY")
+			if apiKey == "" {
+				apiKey = os.Getenv("OPENAI_API_KEY")
+			}
 		}
 
 		// Skip models that need missing API keys (don't cooldown - might be available later)
@@ -511,14 +514,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var outboundBody []byte
-		
+
 		if bodyMap != nil {
 			// Work on a copy of the bodyMap to avoid accumulating changes across retries
 			currentBody := make(map[string]interface{})
 			for k, v := range bodyMap {
 				currentBody[k] = v
 			}
-			
+
 			// Deep copy slices that sanitizeBody might modify in-place
 			if msgs, ok := bodyMap["messages"].([]interface{}); ok {
 				newMsgs := make([]interface{}, len(msgs))
@@ -530,13 +533,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				copy(newTools, tools)
 				currentBody["tools"] = newTools
 			}
-			
+
 			currentBody["model"] = candidate
 			// Strip :free suffix (provider doesn't use it)
 			currentBody["model"] = strings.TrimSuffix(candidate, ":free")
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)
-			
+
 			if debugMode {
 				msgCount := 0
 				if msgs, ok := currentBody["messages"].([]interface{}); ok {
@@ -574,7 +577,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
-		
+
 		log.Printf("Attempting request with model: %s", candidate)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -588,11 +591,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 			log.Printf("Model %s returned status %d. Marking in cooldown...", candidate, resp.StatusCode)
 			markCooldown(candidate)
-			
+
 			// Discard body so connection can be reused
 			io.Copy(ioutil.Discard, resp.Body)
 			resp.Body.Close()
-			
+
 			// If this was the last candidate, we have to return the error
 			if i == len(candidates)-1 {
 				copyResponse(w, resp)
@@ -608,7 +611,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("Model %s returned status %d. Skipping (not cooling down).", candidate, resp.StatusCode)
 		}
-		
+
 		// Only translate SSE if it's a successful response
 		if (r.URL.Path == "/v1/responses") && resp.StatusCode == 200 {
 			translateSSE(w, resp)
@@ -652,7 +655,7 @@ func translateResponse(body []byte) []byte {
 	if !ok || content == "" {
 		return body
 	}
-	
+
 	if debugMode {
 		log.Printf("[SPY] Model returned: %s", content)
 	}
@@ -688,7 +691,7 @@ func translateResponse(body []byte) []byte {
 		// Strip the XML from content so the agent only sees the tool call
 		newContent := toolRegex.ReplaceAllString(content, "")
 		message["content"] = strings.TrimSpace(newContent)
-		
+
 		log.Printf("[TRANS] Translated %d XML tool calls into OpenAI tool_calls", len(toolCalls))
 	}
 
@@ -712,7 +715,7 @@ func copyResponse(w http.ResponseWriter, resp *http.Response) {
 			w.Header().Add(k, v)
 		}
 	}
-	
+
 	var reader io.ReadCloser
 	var err error
 	switch resp.Header.Get("Content-Encoding") {
@@ -748,11 +751,11 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 	w.WriteHeader(resp.StatusCode)
 
 	flusher, ok := w.(http.Flusher)
-	
+
 	respID := "resp_" + fmt.Sprintf("%d", time.Now().Unix())
 	itemID := "item_" + fmt.Sprintf("%d", time.Now().Unix())
 	modelName := "gpt-4o" // Placeholder that OpenCode accepts
-	
+
 	// Utility to send a named event
 	sendEvent := func(evType string, data interface{}) {
 		b, _ := json.Marshal(data)
@@ -788,16 +791,16 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 		if line == "" || !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		
+
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
 			break
 		}
-		
+
 		if debugMode {
 			log.Printf("[RAW-SSE] %s", data)
 		}
-		
+
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
 			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
@@ -805,7 +808,7 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						content, _ := delta["content"].(string)
 						reasoning, _ := delta["reasoning"].(string)
-						
+
 						text := content
 						if text == "" {
 							text = reasoning
@@ -859,25 +862,25 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization")
 		return
 	}
-	
+
 	modelID := strings.TrimPrefix(r.URL.Path, "/v1/models/")
 	if modelID == "/v1/models" {
 		modelID = ""
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	if modelID != "" {
 		w.Write([]byte(fmt.Sprintf(`{"id":"%s","object":"model","created":1678888888,"owned_by":"freeride"}`, modelID)))
 		return
 	}
-	
+
 	models, _ := fetchFreeModels()
 	nvidiaModels, _ := fetchNvidiaFreeModels()
 
 	type openAIModel struct {
 		ID          string `json:"id"`
-		Type        string `json:"type"`       // Anthropic compatibility
-		Object      string `json:"object"`     // OpenAI compatibility
+		Type        string `json:"type"`         // Anthropic compatibility
+		Object      string `json:"object"`       // OpenAI compatibility
 		DisplayName string `json:"display_name"` // Anthropic compatibility
 		Created     int64  `json:"created"`
 		OwnedBy     string `json:"owned_by"`
@@ -1052,11 +1055,11 @@ func sanitizeBody(body map[string]interface{}) {
 					fn = nested
 					name, _ = fn["name"].(string)
 				} else {
-					// Case 2: Anthropic format (name, description, input_schema) 
+					// Case 2: Anthropic format (name, description, input_schema)
 					// or legacy Responses API format (name, description, parameters)
 					name, _ = tMap["name"].(string)
 					description, _ := tMap["description"].(string)
-					
+
 					params := tMap["parameters"]
 					if params == nil {
 						params = tMap["input_schema"] // Map Anthropic input_schema to OpenAI parameters
@@ -1172,27 +1175,38 @@ func main() {
 		port = "11434"
 	}
 
-	http.HandleFunc("/api/tags", handleTags)
-	http.HandleFunc("/api/version", handleVersion)
-	http.HandleFunc("/api/hello", handleHello)
-	http.HandleFunc("/v1/oauth/hello", handleHello)
-	http.HandleFunc("/v1/messages/count_tokens", handleCountTokens)
-	http.HandleFunc("/v1/v1/messages/count_tokens", handleCountTokens)
-	http.HandleFunc("/v1/v1/messages", handleChatCompletions)
-	http.HandleFunc("/v1/chat/completions", handleChatCompletions)
-	http.HandleFunc("/v1/messages", handleChatCompletions)
-	http.HandleFunc("/api/v1/messages", handleChatCompletions)
-	http.HandleFunc("/v1/responses", handleChatCompletions)
-	http.HandleFunc("/v1/models", proxyModels)
-	http.HandleFunc("/v1/models/", proxyModels)
-	http.HandleFunc("/api/chat", handleOllamaChat)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Freeride Proxy is running"))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if debugMode {
+			log.Printf("[DEBUG] %s %s", r.Method, r.URL.Path)
+		}
+
+		switch r.URL.Path {
+		case "/api/tags":
+			handleTags(w, r)
+		case "/api/version":
+			handleVersion(w, r)
+		case "/api/hello", "/v1/oauth/hello":
+			handleHello(w, r)
+		case "/v1/messages/count_tokens", "/v1/v1/messages/count_tokens":
+			handleCountTokens(w, r)
+		case "/v1/v1/messages", "/v1/chat/completions", "/v1/messages", "/api/v1/messages", "/v1/responses":
+			handleChatCompletions(w, r)
+		case "/v1/models", "/v1/models/":
+			proxyModels(w, r)
+		case "/api/chat":
+			handleOllamaChat(w, r)
+		default:
+			if strings.HasPrefix(r.URL.Path, "/v1/models/") {
+				proxyModels(w, r)
+			} else {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("Freeride Proxy is running"))
+			}
+		}
 	})
 
 	log.Printf("Starting Freeride Ollama proxy with Auto-Fallback on port %s...", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
@@ -1210,11 +1224,11 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	sendAnthropicEvent(w, flusher, "message_start", map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
-			"id":   respID,
-			"type": "message",
-			"role": "assistant",
+			"id":      respID,
+			"type":    "message",
+			"role":    "assistant",
 			"content": []interface{}{},
-			"model": "claude-3-5-sonnet-20241022",
+			"model":   "claude-3-5-sonnet-20241022",
 			"usage": map[string]interface{}{
 				"input_tokens":  0,
 				"output_tokens": 0,
@@ -1224,7 +1238,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 
 	// 2. content_block_start
 	sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
-		"type": "content_block_start",
+		"type":  "content_block_start",
 		"index": 0,
 		"content_block": map[string]interface{}{
 			"type": "text",
@@ -1252,7 +1266,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 						if content, ok := delta["content"].(string); ok && content != "" {
 							// 3. content_block_delta
 							sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
-								"type": "content_block_delta",
+								"type":  "content_block_delta",
 								"index": 0,
 								"delta": map[string]interface{}{
 									"type": "text_delta",
@@ -1272,29 +1286,29 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 									if fn, ok := tcMap["function"].(map[string]interface{}); ok {
 										name, _ := fn["name"].(string)
 										args, _ := fn["arguments"].(string)
-										
+
 										// If it's the start of a tool call (has name)
 										if name != "" {
 											id, _ := tcMap["id"].(string)
 											sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
-												"type": "content_block_start",
+												"type":  "content_block_start",
 												"index": index,
 												"content_block": map[string]interface{}{
-													"type": "tool_use",
-													"id":   id,
-													"name": name,
+													"type":  "tool_use",
+													"id":    id,
+													"name":  name,
 													"input": map[string]interface{}{},
 												},
 											})
 										}
-										
+
 										// If it has arguments (delta)
 										if args != "" {
 											sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
-												"type": "content_block_delta",
+												"type":  "content_block_delta",
 												"index": index,
 												"delta": map[string]interface{}{
-													"type": "input_json_delta",
+													"type":         "input_json_delta",
 													"partial_json": args,
 												},
 											})
@@ -1312,7 +1326,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	// 4. content_block_stop for ALL blocks
 	for i := 0; i <= maxIndex; i++ {
 		sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
-			"type": "content_block_stop",
+			"type":  "content_block_stop",
 			"index": i,
 		})
 	}
@@ -1321,7 +1335,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	sendAnthropicEvent(w, flusher, "message_delta", map[string]interface{}{
 		"type": "message_delta",
 		"delta": map[string]interface{}{
-			"stop_reason": "end_turn",
+			"stop_reason":   "end_turn",
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
@@ -1344,3 +1358,4 @@ func sendAnthropicEvent(w http.ResponseWriter, flusher http.Flusher, evType stri
 		flusher.Flush()
 	}
 }
+
