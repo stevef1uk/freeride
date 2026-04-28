@@ -947,30 +947,79 @@ func sanitizeBody(body map[string]interface{}) {
 		delete(body, "system")
 	}
 
-	// 2. Sanitize messages: flatten content lists to strings
+	// 2. Sanitize messages: flatten content lists to strings OR handle Anthropic tool blocks
 	if msgs, ok := body["messages"].([]interface{}); ok {
-		for i, m := range msgs {
+		var newMsgs []interface{}
+		for _, m := range msgs {
 			if mMap, ok := m.(map[string]interface{}); ok {
 				if content, ok := mMap["content"]; ok {
 					if cList, ok := content.([]interface{}); ok {
 						text := ""
+						var toolCalls []map[string]interface{}
+						isToolResult := false
+						var toolResultContent string
+						var toolResultID string
+
 						for _, item := range cList {
 							if iMap, ok := item.(map[string]interface{}); ok {
-								if t, ok := iMap["text"].(string); ok {
-									text += t
-								} else if t, ok := iMap["input_text"].(string); ok {
-									text += t
-								} else if t, ok := iMap["input_text"].(string); ok {
-									text += t
+								itemType, _ := iMap["type"].(string)
+								switch itemType {
+								case "text":
+									if t, ok := iMap["text"].(string); ok {
+										text += t
+									}
+								case "tool_use":
+									id, _ := iMap["id"].(string)
+									name, _ := iMap["name"].(string)
+									input, _ := iMap["input"].(map[string]interface{})
+									inputJSON, _ := json.Marshal(input)
+									toolCalls = append(toolCalls, map[string]interface{}{
+										"id":   id,
+										"type": "function",
+										"function": map[string]interface{}{
+											"name":      name,
+											"arguments": string(inputJSON),
+										},
+									})
+								case "tool_result":
+									isToolResult = true
+									toolResultID, _ = iMap["tool_use_id"].(string)
+									// Content can be text or blocks, for now we assume text
+									if c, ok := iMap["content"].(string); ok {
+										toolResultContent = c
+									} else if cBlocks, ok := iMap["content"].([]interface{}); ok {
+										for _, b := range cBlocks {
+											if bMap, ok := b.(map[string]interface{}); ok {
+												if bt, ok := bMap["text"].(string); ok {
+													toolResultContent += bt
+												}
+											}
+										}
+									}
 								}
 							}
 						}
+
+						if isToolResult {
+							// Anthropic tool_result becomes an OpenAI 'tool' role message
+							newMsgs = append(newMsgs, map[string]interface{}{
+								"role":         "tool",
+								"tool_call_id": toolResultID,
+								"content":      toolResultContent,
+							})
+							continue
+						}
+
 						mMap["content"] = text
+						if len(toolCalls) > 0 {
+							mMap["tool_calls"] = toolCalls
+						}
 					}
 				}
-				msgs[i] = mMap
+				newMsgs = append(newMsgs, mMap)
 			}
 		}
+		body["messages"] = newMsgs
 	}
 
 	// 3. Convert 'tools' to strict OpenAI 'function' schema and remove unsupported ones
@@ -1158,6 +1207,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
+						// 1. Text Content
 						if content, ok := delta["content"].(string); ok && content != "" {
 							// 3. content_block_delta
 							sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
@@ -1168,6 +1218,45 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 									"text": content,
 								},
 							})
+						}
+						// 2. Tool Calls
+						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+							for _, tc := range toolCalls {
+								if tcMap, ok := tc.(map[string]interface{}); ok {
+									index, _ := tcMap["index"].(float64)
+									if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+										name, _ := fn["name"].(string)
+										args, _ := fn["arguments"].(string)
+										
+										// If it's the start of a tool call (has name)
+										if name != "" {
+											id, _ := tcMap["id"].(string)
+											sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
+												"type": "content_block_start",
+												"index": int(index) + 1, // Anthropic blocks start at 0 (text) + N (tools)
+												"content_block": map[string]interface{}{
+													"type": "tool_use",
+													"id":   id,
+													"name": name,
+													"input": map[string]interface{}{},
+												},
+											})
+										}
+										
+										// If it has arguments (delta)
+										if args != "" {
+											sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
+												"type": "content_block_delta",
+												"index": int(index) + 1,
+												"delta": map[string]interface{}{
+													"type": "input_json_delta",
+													"partial_json": args,
+												},
+											})
+										}
+									}
+								}
+							}
 						}
 					}
 				}
