@@ -24,18 +24,47 @@ It runs locally on port `:11434` (Ollama's default port), intercepting requests 
    ./freeride
    ```
 
+## Testing
+
+A comprehensive integration test suite is included in `proxy_test.go`. It validates the full SSE streaming and tool-translation pipelines for both **OpenCode (Beads)** and **Claude Code (Anthropic)** protocols.
+
+To run the tests:
+```bash
+export OPENROUTER_API_KEY="your-key"
+go test -v proxy_test.go main.go
+```
+
+The tests dynamically select available free models and verify that the proxy correctly handles content-block deltas and tool-use JSON translation.
+
 ## Integration with Common AI Tools
 
 Because Freeride automatically translates requests and strips out hardcoded model requirements, you can trick most popular AI coding assistants into using it as their backend for 100% free, auto-recovering inference.
 
 ### 1. Claude Code
-**Status: Fully Supported (with Streaming)**
-Claude Code strictly uses the Anthropic SDK. Freeride includes a full SSE translator that converts standard OpenAI streams into Anthropic-formatted events (`message_start`, `content_block_delta`, etc.). This allows Claude Code to work perfectly with free models while maintaining its native streaming experience.
+**Status: Fully Supported (with Streaming and Tool-Use)**
+
+Claude Code strictly uses the Anthropic SDK. Freeride includes a full SSE translator that converts standard OpenAI streams into Anthropic-formatted events (`message_start`, `content_block_delta`, etc.). It also translates OpenAI tool-use responses back into the JSON format expected by the Claude CLI.
+
+#### Basic Usage
 ```bash
 export ANTHROPIC_BASE_URL="http://localhost:11434"
-export ANTHROPIC_API_KEY="dummy_key"
+export ANTHROPIC_API_KEY="sk-ant-dummy"
 claude
 ```
+
+#### Bypassing Subscription/Onboarding Checks
+If the `claude` CLI prompts for a subscription or redirects you to a browser login, you can manually mark the onboarding as complete in your global configuration:
+
+Edit `~/.claude.json` and ensure these fields are set:
+```json
+{
+  "hasCompletedOnboarding": true,
+  "authMethod": "console"
+}
+```
+
+#### Troubleshooting "Double /v1" issues
+Some versions of the Anthropic SDK automatically append `/v1` to the base URL. If you see errors about "undefined" or "map", ensure your `ANTHROPIC_BASE_URL` does **not** end with `/v1`. Freeride also includes fallback handlers for `/v1/v1/` paths to mitigate this.
 
 ### 2. OpenCode
 **Status: Fully Supported**

@@ -619,6 +619,12 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	// If we get here, no candidates were available or all failed
+	log.Printf("[ERROR] No models available to handle the request.")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(`{"error": {"message": "No models available in the Freeride proxy. Please check your API keys.", "type": "unavailable"}}`))
 }
 
 func translateResponse(body []byte) []byte {
@@ -869,10 +875,12 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 	nvidiaModels, _ := fetchNvidiaFreeModels()
 
 	type openAIModel struct {
-		ID      string `json:"id"`
-		Object  string `json:"object"`
-		Created int64  `json:"created"`
-		OwnedBy string `json:"owned_by"`
+		ID          string `json:"id"`
+		Type        string `json:"type"`       // Anthropic compatibility
+		Object      string `json:"object"`     // OpenAI compatibility
+		DisplayName string `json:"display_name"` // Anthropic compatibility
+		Created     int64  `json:"created"`
+		OwnedBy     string `json:"owned_by"`
 	}
 	var res struct {
 		Object string        `json:"object"`
@@ -881,24 +889,29 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 	res.Object = "list"
 	for _, m := range models {
 		res.Data = append(res.Data, openAIModel{
-			ID:      m.ID,
-			Object:  "model",
-			Created: m.Created,
-			OwnedBy: "openrouter",
+			ID:          m.ID,
+			Type:        "model",
+			Object:      "model",
+			DisplayName: m.ID,
+			Created:     m.Created,
+			OwnedBy:     "openrouter",
 		})
 	}
 	// Add NVIDIA models
 	for _, m := range nvidiaModels {
 		res.Data = append(res.Data, openAIModel{
-			ID:      m.ID,
-			Object:  "model",
-			Created: int64(m.Created),
-			OwnedBy: "nvidia",
+			ID:          m.ID,
+			Type:        "model",
+			Object:      "model",
+			DisplayName: m.ID,
+			Created:     int64(m.Created),
+			OwnedBy:     "nvidia",
 		})
 	}
-	res.Data = append(res.Data, openAIModel{ID: "gpt-4o", Object: "model", Created: 1678888888, OwnedBy: "openai"})
-	res.Data = append(res.Data, openAIModel{ID: "gpt-4", Object: "model", Created: 1678888888, OwnedBy: "openai"})
-	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet", Object: "model", Created: 1678888888, OwnedBy: "anthropic"})
+	res.Data = append(res.Data, openAIModel{ID: "gpt-4o", Type: "model", Object: "model", DisplayName: "GPT-4o", Created: 1678888888, OwnedBy: "openai"})
+	res.Data = append(res.Data, openAIModel{ID: "gpt-4", Type: "model", Object: "model", DisplayName: "GPT-4", Created: 1678888888, OwnedBy: "openai"})
+	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet-20241022", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet", Created: 1678888888, OwnedBy: "anthropic"})
+	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet (Legacy)", Created: 1678888888, OwnedBy: "anthropic"})
 	json.NewEncoder(w).Encode(res)
 }
 
@@ -1124,6 +1137,20 @@ func cleanStaleCooldowns() {
 	}
 }
 
+func handleHello(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] Spoofing hello response for %s", r.URL.Path)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "ok", "message": "hello"}`))
+}
+
+func handleCountTokens(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] Spoofing count_tokens response")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"input_tokens": 100}`))
+}
+
 func main() {
 	flag.BoolVar(&debugMode, "debug", false, "Enable verbose debug logging")
 	flag.Parse()
@@ -1139,6 +1166,11 @@ func main() {
 
 	http.HandleFunc("/api/tags", handleTags)
 	http.HandleFunc("/api/version", handleVersion)
+	http.HandleFunc("/api/hello", handleHello)
+	http.HandleFunc("/v1/oauth/hello", handleHello)
+	http.HandleFunc("/v1/messages/count_tokens", handleCountTokens)
+	http.HandleFunc("/v1/v1/messages/count_tokens", handleCountTokens) // Handle double /v1
+	http.HandleFunc("/v1/v1/messages", handleChatCompletions)          // Handle double /v1
 	http.HandleFunc("/v1/chat/completions", handleChatCompletions)
 	http.HandleFunc("/v1/messages", handleChatCompletions)
 	http.HandleFunc("/api/v1/messages", handleChatCompletions)
@@ -1147,6 +1179,7 @@ func main() {
 	http.HandleFunc("/v1/models/", proxyModels)
 	http.HandleFunc("/api/chat", handleOllamaChat)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Incoming %s request to %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Freeride Proxy is running"))
 	})
