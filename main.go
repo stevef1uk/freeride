@@ -1177,8 +1177,8 @@ func main() {
 	http.HandleFunc("/api/hello", handleHello)
 	http.HandleFunc("/v1/oauth/hello", handleHello)
 	http.HandleFunc("/v1/messages/count_tokens", handleCountTokens)
-	http.HandleFunc("/v1/v1/messages/count_tokens", handleCountTokens) // Handle double /v1
-	http.HandleFunc("/v1/v1/messages", handleChatCompletions)          // Handle double /v1
+	http.HandleFunc("/v1/v1/messages/count_tokens", handleCountTokens)
+	http.HandleFunc("/v1/v1/messages", handleChatCompletions)
 	http.HandleFunc("/v1/chat/completions", handleChatCompletions)
 	http.HandleFunc("/v1/messages", handleChatCompletions)
 	http.HandleFunc("/api/v1/messages", handleChatCompletions)
@@ -1187,7 +1187,6 @@ func main() {
 	http.HandleFunc("/v1/models/", proxyModels)
 	http.HandleFunc("/api/chat", handleOllamaChat)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[DEBUG] Incoming %s request to %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Freeride Proxy is running"))
 	})

@@ -124,6 +124,43 @@ func TestClaudeCodeTools(t *testing.T) {
 	}
 }
 
+func TestAnthropicToolDefinitions(t *testing.T) {
+	model := getAvailableModel(t)
+	// Test if the proxy translates Anthropic's tool definition format (input_schema)
+	payload := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "Write a file"},
+		},
+		"tools": []map[string]interface{}{
+			{
+				"name":        "write_file",
+				"description": "Writes content to a file",
+				"input_schema": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"filepath": map[string]interface{}{"type": "string"},
+						"content":  map[string]interface{}{"type": "string"},
+					},
+				},
+			},
+		},
+		"max_tokens": 100,
+		"stream":     true,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(proxyURL+"/v1/messages", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to connect to proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Anthropic tool definition request failed with status %d", resp.StatusCode)
+	}
+}
+
 func TestOpenCodeBeadsProtocol(t *testing.T) {
 	model := getAvailableModel(t)
 	payload := map[string]interface{}{

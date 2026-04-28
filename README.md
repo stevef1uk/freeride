@@ -43,28 +43,34 @@ Because Freeride automatically translates requests and strips out hardcoded mode
 ### 1. Claude Code
 **Status: Fully Supported (with Streaming and Tool-Use)**
 
-Claude Code strictly uses the Anthropic SDK. Freeride includes a full SSE translator that converts standard OpenAI streams into Anthropic-formatted events (`message_start`, `content_block_delta`, etc.). It also translates OpenAI tool-use responses back into the JSON format expected by the Claude CLI.
+Claude Code works perfectly with Freeride by translating Anthropic's Messages API into standard OpenAI chat completions.
 
-#### Basic Usage
-```bash
-export ANTHROPIC_BASE_URL="http://localhost:11434"
-export ANTHROPIC_API_KEY="sk-ant-dummy"
-claude
-```
+#### Quick Start
+1. **Bypass Subscription**: Mark onboarding as complete in `~/.claude.json`:
+   ```json
+   {
+     "hasCompletedOnboarding": true,
+     "authMethod": "console"
+   }
+   ```
+2. **Set Environment**:
+   ```bash
+   export ANTHROPIC_BASE_URL="http://localhost:11434"
+   export ANTHROPIC_API_KEY="sk-ant-dummy"
+   ```
+3. **Run**:
+   ```bash
+   claude
+   ```
 
-#### Bypassing Subscription/Onboarding Checks
-If the `claude` CLI prompts for a subscription or redirects you to a browser login, you can manually mark the onboarding as complete in your global configuration:
+#### Key Translation Features
+- **SSE Translation**: Converts OpenAI streams into Anthropic events (`message_start`, `content_block_delta`).
+- **Tool Translation**: Maps Anthropic's `input_schema` to OpenAI's `parameters` and handles `tool_use`/`tool_result` translation in conversation history.
+- **Path Routing**: Automatically handles both `/v1/messages` and the redundant `/v1/v1/messages` paths.
 
-Edit `~/.claude.json` and ensure these fields are set:
-```json
-{
-  "hasCompletedOnboarding": true,
-  "authMethod": "console"
-}
-```
-
-#### Troubleshooting "Double /v1" issues
-Some versions of the Anthropic SDK automatically append `/v1` to the base URL. If you see errors about "undefined" or "map", ensure your `ANTHROPIC_BASE_URL` does **not** end with `/v1`. Freeride also includes fallback handlers for `/v1/v1/` paths to mitigate this.
+#### Troubleshooting
+- **Hanging/Planning Only**: Ensure your proxy is updated to the latest version (v1.0.5+) which includes the `content_block_stop` fix.
+- **Undefined Map Errors**: Ensure `ANTHROPIC_BASE_URL` does **not** end with `/v1`.
 
 ### 2. OpenCode
 **Status: Fully Supported**
