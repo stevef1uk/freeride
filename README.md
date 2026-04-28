@@ -56,7 +56,7 @@ Claude Code works perfectly with Freeride by translating Anthropic's Messages AP
 2. **Set Environment**:
    ```bash
    export ANTHROPIC_BASE_URL="http://localhost:11434"
-   export ANTHROPIC_API_KEY="sk-ant-dummy"
+   export ANTHROPIC_API_KEY="sk-ant-api03-dummy-key-that-is-long-enough-to-pass-validation-abcdefghijklmnopqrstuvwxyz012345"
    ```
 3. **Run**:
    ```bash
@@ -149,4 +149,8 @@ Freeride does more than just proxy; it actively "fixes" requests to ensure they 
 - **Schema Translation**: Automatically converts complex tool schemas (like those from the Gastown Responses API) into standard OpenAI function calls.
 - **Payload Cleaning**: Strips Anthropic-specific metadata, flattens content blocks, and converts `system` parameters into system messages.
 - **Safety Caps**: Automatically caps `max_tokens` at 4096 and strips unsupported parameters to prevent 400 errors from upstream providers.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
 - **Intelligent Ranking**: Models are scored based on context length, tool support, and recency. Highly reliable models like **Gemini 2.0 Flash** receive a massive boost to ensure they are used first.
