@@ -93,30 +93,39 @@ export OPENAI_API_KEY="dummy_key"
 **Status: Not Supported / Unstable**
 GitHub Copilot is highly proprietary and uses internal authentication that often rejects local proxy overrides. We recommend using the **Continue.dev** VS Code extension instead, which natively supports `http://localhost:11434/v1` as an OpenAI provider!
 
-### 5. Gastown
+### 5. GasTown
 **Status: Fully Supported**
-Gastown agents can use this proxy as a cost-free backend for all model inference. Configure your town by editing `settings/config.json`:
+GasTown agents can use this proxy as a cost-free backend for all model inference. The most reliable way to configure it is using a **wrapper script** and a **PATH override**.
 
-```json
-{
-  "type": "rig",
-  "version": 1,
-  "default_agent": "freecode",
-  "agents": {
-    "freecode": {
-      "provider": "openai",
-      "command": "env",
-      "args": [
-        "ANTHROPIC_BASE_URL=http://localhost:11434",
-        "ANTHROPIC_API_KEY=sk-ant-dummy",
-        "claude"
-      ]
-    }
-  }
-}
-```
+#### Recommended Setup
+1. **Create a wrapper script** (e.g., `bin/claude`) in your rig:
+   ```bash
+   #!/bin/bash
+   export ANTHROPIC_BASE_URL="http://localhost:11434"
+   export ANTHROPIC_API_KEY="sk-ant-api03-..."
+   # Use the autonomous flag to prevent interactive prompts
+   exec /bin/claude --dangerously-skip-permissions "$@"
+   ```
+2. **Update your rig `config.json`** to use this script:
+   ```json
+   "agents": {
+     "claude": {
+       "provider": "openai",
+       "command": "/path/to/your/rig/bin/claude",
+       "args": []
+     }
+   }
+   ```
+3. **Override the PATH** before starting the rig to ensure all sub-processes hit the wrapper:
+   ```bash
+   export PATH="/path/to/your/rig/bin:$PATH"
+   gt up
+   ```
 
-**Note**: Freeride specifically supports the **Beads protocol** used by OpenCode agents. Requests to `/v1/responses` are automatically translated into the correct event stream format (`response.output_text.delta`).
+**Key Features for GasTown**:
+- **Universal Tool Support**: Automatically translates Claude's XML tool calls (`read_file`, `write_to_file`, `run_terminal_command`) into OpenAI-compatible function calls.
+- **Autonomous Execution**: Supports the `--dangerously-skip-permissions` flag for 100% human-free agent operation.
+- **Beads Protocol**: Automatically handles the specialized SSE format used by OpenCode agents.
 
 Then bring up the infrastructure:
 ```bash
