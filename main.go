@@ -144,6 +144,7 @@ func calculateStandardCooldown(errorCount int) time.Duration {
 // ... fetchFreeModels, scoreModel, handleTags, handleVersion, handleOllamaChat existing ...
 
 func fetchFreeModels() ([]openRouterModel, error) {
+	log.Printf("[DEBUG] fetchFreeModels called")
 	cacheMutex.RLock()
 	if time.Since(cacheTime) < cacheTTL && len(cachedFreeModels) > 0 {
 		models := cachedFreeModels
@@ -163,6 +164,7 @@ func fetchFreeModels() ([]openRouterModel, error) {
 	}
 	defer resp.Body.Close()
 
+	log.Printf("[DEBUG] OpenRouter API status: %d", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("OpenRouter API returned status %d", resp.StatusCode)
 	}
@@ -199,6 +201,7 @@ func fetchFreeModels() ([]openRouterModel, error) {
 	cacheTime = time.Now()
 	cacheMutex.Unlock()
 
+	log.Printf("[DEBUG] Fetched %d free OpenRouter models", len(freeModels))
 	return freeModels, nil
 }
 
@@ -426,6 +429,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		if m, ok := bodyMap["model"].(string); ok {
 			originalModel = strings.TrimSuffix(m, ":free")
+			if originalModel == "openrouter" {
+				originalModel = "" // Force fallback to best available
+			}
 		}
 	} else {
 		log.Printf("[ERROR] Failed to unmarshal incoming JSON: %v", err)
@@ -1215,22 +1221,45 @@ func handleHello(w http.ResponseWriter, r *http.Request) {
 func handleCountTokens(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] Spoofing count_tokens response")
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"input_tokens": 100}`))
 }
 
 func main() {
-	flag.BoolVar(&debugMode, "debug", false, "Enable verbose debug logging")
+	// Load .env file if it exists
+	if data, err := ioutil.ReadFile(".env"); err == nil {
+		log.Printf("[DEBUG] Loading API keys from .env file")
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				k := strings.TrimSpace(parts[0])
+				v := strings.TrimSpace(parts[1])
+				masked := ""
+				if len(v) > 8 {
+					masked = v[:4] + "..." + v[len(v)-4:]
+				} else {
+					masked = "****"
+				}
+				log.Printf("[DEBUG] Setting environment variable: %s = %s", k, masked)
+				os.Setenv(k, v)
+			}
+		}
+	} else {
+		log.Printf("[DEBUG] No .env file found: %v", err)
+	}
+
+	flag.BoolVar(&debugMode, "debug", false, "Enable debug logging")
 	flag.Parse()
 
 	// Clean up stale cooldowns on startup
 	cleanStaleCooldowns()
 	loadCooldowns()
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "11434"
-	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if debugMode {
@@ -1262,7 +1291,12 @@ func main() {
 		}
 	})
 
-	log.Printf("Starting Freeride Ollama proxy with Auto-Fallback on port %s...", port)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "11434"
+	}
+
+	log.Printf("Proxy starting on :%s", port)
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
