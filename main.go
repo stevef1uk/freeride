@@ -38,6 +38,8 @@ type nvidiaModel struct {
 	Created    int         `json:"created"`
 	OwnedBy    string      `json:"owned_by"`
 	Permission interface{} `json:"permission"`
+	// Track tool/support capability
+	SupportsTools bool `json:"-"`
 }
 
 type ollamaModelDetails struct {
@@ -247,16 +249,37 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 	for _, m := range wrapper.Data {
 		lowerID := strings.ToLower(m.ID)
 		// Only include chat/instruct models (not embeddings, translators, vision-only, safety, etc)
-		if strings.HasPrefix(m.ID, "nvidia/") && !strings.Contains(lowerID, "embed") && !strings.Contains(lowerID, "safety") && !strings.Contains(lowerID, "guard") && !strings.Contains(lowerID, "clip") && !strings.Contains(lowerID, "vila") && !strings.Contains(lowerID, "riva") && !strings.Contains(lowerID, "calibration") && !strings.Contains(lowerID, "pixel") && !strings.Contains(lowerID, "neva") && strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron") {
-			freeModels = append(freeModels, m)
+		isChatModel := strings.HasPrefix(m.ID, "nvidia/") && !strings.Contains(lowerID, "embed") && !strings.Contains(lowerID, "safety") && !strings.Contains(lowerID, "guard") && !strings.Contains(lowerID, "clip") && !strings.Contains(lowerID, "vila") && !strings.Contains(lowerID, "riva") && !strings.Contains(lowerID, "calibration") && !strings.Contains(lowerID, "pixel") && !strings.Contains(lowerID, "neva") && strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron")
+
+		if !isChatModel {
+			continue
 		}
+
+		// Mark models that support tools/function calling
+		// Nemotron and newerLlama models generally support tools
+		m.SupportsTools = strings.Contains(lowerID, "nemotron") ||
+			strings.Contains(lowerID, "llama-3.3") ||
+			strings.Contains(lowerID, "llama-3.2") ||
+			strings.Contains(lowerID, "deepseek") ||
+			strings.Contains(lowerID, "qwen2.5") ||
+			strings.Contains(lowerID, "qwen3")
+
+		freeModels = append(freeModels, m)
 	}
 
 	cacheMutex.Lock()
 	cachedNvidiaModels = freeModels
 	cacheMutex.Unlock()
 
-	log.Printf("[DEBUG] Fetched %d free NVIDIA models", len(freeModels))
+	log.Printf("[DEBUG] Fetched %d free NVIDIA models (%d with tool support)", len(freeModels), func() int {
+		count := 0
+		for _, m := range freeModels {
+			if m.SupportsTools {
+				count++
+			}
+		}
+		return count
+	}())
 	return freeModels, nil
 }
 
@@ -324,6 +347,8 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nvidiaModels, _ := fetchNvidiaFreeModels()
+
 	var ollamaModels []ollamaModel
 	for _, m := range models {
 		modelName := m.ID
@@ -339,8 +364,26 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 			Digest:     "sha256:freeride",
 			Details: ollamaModelDetails{
 				Format:            "gguf",
-				Family:            "freeride",
-				Families:          []string{"freeride"},
+				Family:            "openrouter",
+				Families:          []string{"openrouter"},
+				ParameterSize:     "unknown",
+				QuantizationLevel: "none",
+			},
+		})
+	}
+
+	// Add NVIDIA models to discovery
+	for _, m := range nvidiaModels {
+		ollamaModels = append(ollamaModels, ollamaModel{
+			Name:       m.ID,
+			Model:      m.ID,
+			ModifiedAt: time.Unix(int64(m.Created), 0).Format(time.RFC3339),
+			Size:       0,
+			Digest:     "sha256:nvidia",
+			Details: ollamaModelDetails{
+				Format:            "gguf",
+				Family:            "nvidia",
+				Families:          []string{"nvidia"},
 				ParameterSize:     "unknown",
 				QuantizationLevel: "none",
 			},
@@ -469,9 +512,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			candidates = append(candidates, m.ID)
 		}
 	}
-	// Add NVIDIA free models
+	// Add only tool-capable NVIDIA free models
 	for _, m := range nvidiaModels {
-		if m.ID != originalModel && !isCooldown(m.ID) {
+		if m.ID != originalModel && !isCooldown(m.ID) && m.SupportsTools {
 			candidates = append(candidates, m.ID)
 		}
 	}
@@ -479,12 +522,22 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// If all are in cooldown, only try free models - never fall back to paid models
 	if len(candidates) == 0 {
 		log.Printf("[DEBUG] candidates empty, checking models: or=%s len(models)=%d len(nvidiaModels)=%d", originalModel, len(models), len(nvidiaModels))
+		// Filter to only tool-capable models for fallback
+		toolCapableNvidia := func() []nvidiaModel {
+			var filtered []nvidiaModel
+			for _, m := range nvidiaModels {
+				if m.SupportsTools {
+					filtered = append(filtered, m)
+				}
+			}
+			return filtered
+		}()
 		if len(models) > 0 && !isCooldown(models[0].ID) {
 			candidates = append(candidates, models[0].ID)
 			log.Printf("[DEBUG] using OpenRouter fallback: %s", models[0].ID)
-		} else if len(nvidiaModels) > 0 && !isCooldown(nvidiaModels[0].ID) {
-			candidates = append(candidates, nvidiaModels[0].ID)
-			log.Printf("[DEBUG] using NVIDIA fallback: %s", nvidiaModels[0].ID)
+		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) {
+			candidates = append(candidates, toolCapableNvidia[0].ID)
+			log.Printf("[DEBUG] using NVIDIA tool-capable fallback: %s", toolCapableNvidia[0].ID)
 		} else {
 			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
 			w.Header().Set("Content-Type", "application/json")
