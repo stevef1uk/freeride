@@ -6,7 +6,8 @@ It runs locally on port `:11434` (Ollama's default port), intercepting requests 
 
 ## Prerequisites
 
-- Go 1.15+ (The proxy has been adapted to build cleanly with older Go versions, though a modern version is recommended).
+- Go 1.18+ (The proxy has been adapted to build cleanly with older Go versions, though a modern version is recommended).
+- A **.env file** or environment variables for your API keys.
 - An **OpenRouter API key**.
 - An **NVIDIA API key** (optional, but highly recommended for accessing high-performance NIM models).
 
@@ -14,27 +15,32 @@ It runs locally on port `:11434` (Ollama's default port), intercepting requests 
 
 1. Build the proxy:
    ```bash
-   go build
+   go build -o freeride main.go
    ```
 
-2. Run the proxy with your API keys:
+2. Configure your keys:
+   Create a `.env` file in the project root:
+   ```env
+   OPENROUTER_API_KEY=sk-or-v1-...
+   NVIDIA_API_KEY=nvapi-...
+   ```
+
+3. Run the proxy:
    ```bash
-   export OPENROUTER_API_KEY="sk-or-v1-..."
-   export NVIDIA_API_KEY="nvapi-..."
-   ./freeride
+   ./freeride --debug > freeride_live.log 2>&1 &
    ```
 
 ## Testing
 
-A comprehensive integration test suite is included in `proxy_test.go`. It validates the full SSE streaming and tool-translation pipelines for both **OpenCode (Beads)** and **Claude Code (Anthropic)** protocols.
+A comprehensive integration test suite is included in `proxy_test.go`. It validates:
+- **SSE Streaming**: Full protocol translation for Beads and Anthropic.
+- **Tool Translation**: JSON schema mapping and tool-use lifecycle.
+- **Model Discovery**: Verifies that models from both OpenRouter and NVIDIA are correctly fetched, cached, and routable.
 
 To run the tests:
 ```bash
-export OPENROUTER_API_KEY="your-key"
 go test -v proxy_test.go main.go
 ```
-
-The tests dynamically select available free models and verify that the proxy correctly handles content-block deltas and tool-use JSON translation.
 
 ## Integration with Common AI Tools
 

@@ -351,3 +351,72 @@ func TestInvalidToolCall(t *testing.T) {
 		t.Errorf("Proxy returned 503 for invalid tool, expected better handling")
 	}
 }
+func TestModelDiscoveryAndUsage(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/api/tags")
+	if err != nil {
+		t.Fatalf("Failed to fetch models: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var data struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("Failed to decode models: %v", err)
+	}
+
+	foundOpenRouter := false
+	foundNvidia := false
+	var orModel, nvModel string
+
+	for _, m := range data.Models {
+		if !foundOpenRouter && (strings.HasPrefix(m.Name, "google/") || strings.HasPrefix(m.Name, "meta/") || strings.HasPrefix(m.Name, "anthropic/")) {
+			foundOpenRouter = true
+			orModel = m.Name
+		}
+		if !foundNvidia && strings.HasPrefix(m.Name, "nvidia/") && !strings.Contains(m.Name, "super") {
+			// Choose a non-super model for faster testing
+			foundNvidia = true
+			nvModel = m.Name
+		}
+	}
+
+	if !foundOpenRouter {
+		t.Error("OpenRouter models not found in discovery list")
+	} else {
+		t.Logf("Testing OpenRouter model: %s", orModel)
+		testCompletion(t, orModel)
+	}
+
+	if !foundNvidia {
+		t.Error("NVIDIA models not found in discovery list")
+	} else {
+		t.Logf("Testing NVIDIA model: %s", nvModel)
+		testCompletion(t, nvModel)
+	}
+}
+
+func testCompletion(t *testing.T, model string) {
+	payload := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "Say 'Test'"},
+		},
+		"max_tokens": 10,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(proxyURL+"/v1/chat/completions", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		t.Errorf("Request to %s failed: %v", model, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errorBody, _ := ioutil.ReadAll(resp.Body)
+		t.Errorf("Model %s returned status %d: %s", model, resp.StatusCode, string(errorBody))
+	}
+}
