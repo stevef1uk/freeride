@@ -99,12 +99,14 @@ export OPENAI_API_KEY="dummy_key"
 **Status: Not Supported / Unstable**
 GitHub Copilot is highly proprietary and uses internal authentication that often rejects local proxy overrides. We recommend using the **Continue.dev** VS Code extension instead, which natively supports `http://localhost:11434/v1` as an OpenAI provider!
 
-### 5. GasTown
+### 5. GasTown (via Freeride Proxy)
+
 **Status: Fully Supported**
+
 GasTown agents can use this proxy as a cost-free backend for all model inference. The most reliable way to configure it is using a **wrapper script** and a **PATH override**.
 
 #### Recommended Setup
-1. **Create a wrapper script** (e.g., `bin/claude`) in your rig:
+1. **Create a wrapper script** (e.g., `bin/claude`) in your rig):
    ```bash
    #!/bin/bash
    export ANTHROPIC_BASE_URL="http://localhost:11434"
@@ -137,6 +139,43 @@ Then bring up the infrastructure:
 ```bash
 gt up
 ```
+
+### 6. GasTown (via OpenRouter directly)
+
+**Alternative: Use opencode with OpenRouter directly (no local proxy needed)**
+
+For GasTown rigs (like `fin/`), configure opencode to use OpenRouter:
+
+1. **Create a wrapper script** (e.g., `opencode-wrapper.sh` in your rig):
+   ```bash
+   #!/bin/bash
+   exec env -i \
+       HOME="$HOME" PATH="$PATH" USER="$USER" SHELL="$SHELL" TERM="$TERM" \
+       OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
+       OPENAI_API_KEY="$OPENROUTER_API_KEY" \
+       /path/to/opencode "$@"
+   ```
+
+2. **Update rig config.json**:
+   ```json
+   {
+     "default_agent": "opencode",
+     "agents": {
+       "opencode": {
+         "provider": "openai",
+         "command": "/path/to/rig/opencode-wrapper.sh",
+         "args": []
+       }
+     }
+   }
+   ```
+
+3. **Export API key and start mayor**:
+   ```bash
+   export OPENROUTER_API_KEY="sk-or-v1-..."
+   gt mayor start --agent opencode
+   gt mayor attach
+   ```
 
 ## Supported Endpoints
 
