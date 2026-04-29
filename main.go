@@ -552,7 +552,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		var apiKey string
 
 		isNvidia := strings.HasPrefix(candidate, "nvidia/")
-		isOpenRouter := strings.Contains(candidate, ":free") || strings.HasPrefix(candidate, "google/") || strings.HasPrefix(candidate, "meta/") || strings.HasPrefix(candidate, "mistralai/") || strings.HasPrefix(candidate, "anthropic/")
+		isOpenRouter := strings.Contains(candidate, ":free") || strings.HasPrefix(candidate, "openrouter/") || strings.HasPrefix(candidate, "google/") || strings.HasPrefix(candidate, "meta/") || strings.HasPrefix(candidate, "mistralai/") || strings.HasPrefix(candidate, "anthropic/")
 
 		if isOpenRouter && !isNvidia {
 			targetURL = "https://openrouter.ai/api/v1/chat/completions"
