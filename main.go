@@ -641,7 +641,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			resp.Body.Close()
 
 			// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
-			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 404 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 				markCooldown(candidate)
 			}
 
