@@ -21,6 +21,13 @@ It runs locally on port `:11434` (Ollama's default port), intercepting requests 
 - An **OpenRouter API key**.
 - An **NVIDIA API key** (Required for the highest performance free models).
 
+## CLI Configuration
+
+The proxy supports the following command-line flags:
+
+- `--debug`: Enables verbose logging of requests, internal routing decisions, and API responses.
+- `--allow-paid`: (Disabled by default) Allows the proxy to use paid models (e.g., Claude 3.5 Sonnet) for complex tasks or as a fallback. Without this flag, the proxy operates in **Strict Zero-Cost Mode**.
+
 ## Building and Running
 
 1. Build the proxy:
