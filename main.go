@@ -74,6 +74,7 @@ var (
 	cooldownMu sync.RWMutex
 
 	debugMode bool
+	allowPaid bool
 	toolRegex = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
 	paramRegex = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
 )
@@ -180,16 +181,15 @@ func fetchFreeModels() ([]openRouterModel, error) {
 
 	var freeModels []openRouterModel
 	for _, m := range wrapper.Data {
-		if m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00" {
-			// Loosen tool check - many models support tools but don't advertise it in metadata
-			/*
-			*/
-
+		isModelFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
+		if isModelFree || allowPaid {
 			lowerID := strings.ToLower(m.ID)
 			if strings.Contains(lowerID, "lyria") || strings.Contains(lowerID, "liquid") {
 				continue
 			}
-
+			if isModelFree && debugMode {
+				log.Printf("[DEBUG] OpenRouter Free Model: %s (Price: %s)", m.ID, m.Pricing.Prompt)
+			}
 			freeModels = append(freeModels, m)
 		}
 	}
@@ -247,13 +247,36 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 
 	var freeModels []nvidiaModel
 	for _, m := range wrapper.Data {
+		if debugMode {
+			log.Printf("[DEBUG] NVIDIA Model ID: %s", m.ID)
+		}
 		lowerID := strings.ToLower(m.ID)
+		
+		// Broaden prefix check to include partners hosted on NVIDIA NIM
+		validPrefix := strings.HasPrefix(m.ID, "nvidia/") || 
+		              strings.HasPrefix(m.ID, "meta/") || 
+					  strings.HasPrefix(m.ID, "google/") || 
+					  strings.HasPrefix(m.ID, "mistralai/") || 
+					  strings.HasPrefix(m.ID, "microsoft/") ||
+					  strings.HasPrefix(m.ID, "deepseek/")
+
 		// Only include chat/instruct models (not embeddings, translators, vision-only, safety, etc)
-		isChatModel := strings.HasPrefix(m.ID, "nvidia/") && !strings.Contains(lowerID, "embed") && !strings.Contains(lowerID, "safety") && !strings.Contains(lowerID, "guard") && !strings.Contains(lowerID, "clip") && !strings.Contains(lowerID, "vila") && !strings.Contains(lowerID, "riva") && !strings.Contains(lowerID, "calibration") && !strings.Contains(lowerID, "pixel") && !strings.Contains(lowerID, "neva") && strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron")
+		isChatModel := validPrefix && 
+		              !strings.Contains(lowerID, "embed") && 
+					  !strings.Contains(lowerID, "safety") && 
+					  !strings.Contains(lowerID, "guard") && 
+					  !strings.Contains(lowerID, "clip") && 
+					  !strings.Contains(lowerID, "vila") && 
+					  !strings.Contains(lowerID, "riva") && 
+					  !strings.Contains(lowerID, "calibration") && 
+					  !strings.Contains(lowerID, "pixel") && 
+					  !strings.Contains(lowerID, "neva") && 
+					  (strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron") || strings.Contains(lowerID, "chat") || strings.Contains(lowerID, "coder"))
 
 		if !isChatModel {
 			continue
 		}
+
 
 		// Mark models that support tools/function calling
 		// Nemotron and newerLlama models generally support tools
@@ -440,6 +463,34 @@ func isCooldown(model string) bool {
 	return false
 }
 
+func isComplex(body map[string]interface{}) bool {
+	if body == nil {
+		return false
+	}
+	// 1. Presence of tools
+	if tools, ok := body["tools"].([]interface{}); ok && len(tools) > 0 {
+		log.Printf("[DEBUG] Request classified as COMPLEX: Tools present (%d)", len(tools))
+		return true
+	}
+
+	// 2. Large number of messages (long context)
+	if msgs, ok := body["messages"].([]interface{}); ok && len(msgs) > 30 {
+		log.Printf("[DEBUG] Request classified as COMPLEX: Many messages (%d)", len(msgs))
+		return true
+	}
+
+	// 3. User specifically asked for a high-tier model without :free suffix
+	if model, ok := body["model"].(string); ok {
+		lowerModel := strings.ToLower(model)
+		if (strings.Contains(lowerModel, "sonnet") || strings.Contains(lowerModel, "gpt-4o") || strings.Contains(lowerModel, "opus") || strings.Contains(lowerModel, "o1-")) && !strings.Contains(lowerModel, ":free") {
+			log.Printf("[DEBUG] Request classified as COMPLEX: High-tier model requested (%s)", model)
+			return true
+		}
+	}
+
+	return false
+}
+
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -473,7 +524,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[DEBUG] Incoming JSON keys: %v", keys)
 		}
 		if m, ok := bodyMap["model"].(string); ok {
-			originalModel = strings.TrimSuffix(m, ":free")
+			originalModel = m
 			if originalModel == "openrouter" {
 				originalModel = "" // Force fallback to best available
 			}
@@ -495,36 +546,135 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Build candidates list from BOTH OpenRouter AND NVIDIA free models
 	var candidates []string
-	isFree := false
+	isComplexRequest := isComplex(bodyMap)
 
-	// Check OpenRouter models
-	for _, m := range models {
-		if m.ID == originalModel {
-			isFree = true
-			break
+	// Tier 1: Original requested model (if Free)
+	isOriginalFree := false
+	if originalModel != "" {
+		if !isCooldown(originalModel) {
+		for _, m := range models {
+			if m.ID == originalModel {
+				isOriginalFree = m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
+				break
+			}
+		}
+		if !isOriginalFree {
+			for _, m := range nvidiaModels {
+				if m.ID == originalModel {
+					isOriginalFree = true
+					break
+				}
+			}
+		}
+		if isOriginalFree {
+			candidates = append(candidates, originalModel)
+		}
 		}
 	}
-	// Also check NVIDIA models
+
+	// Tier 2: Free tool-capable NVIDIA models (Gauranteed Free)
 	for _, m := range nvidiaModels {
 		if m.ID == originalModel {
-			isFree = true
-			break
+			continue
 		}
-	}
-
-	if originalModel != "" && isFree && !isCooldown(originalModel) {
-		candidates = append(candidates, originalModel)
-	}
-	// Add OpenRouter free models
-	for _, m := range models {
-		if m.ID != originalModel && !isCooldown(m.ID) {
+		if !isCooldown(m.ID) && m.SupportsTools {
 			candidates = append(candidates, m.ID)
 		}
 	}
-	// Add only tool-capable NVIDIA free models
-	for _, m := range nvidiaModels {
-		if m.ID != originalModel && !isCooldown(m.ID) && m.SupportsTools {
+
+	// Tier 3: Specific Reliable Free OpenRouter models
+	reliableFree := []string{
+		"meta-llama/llama-3.3-70b-instruct:free",
+		"google/gemma-4-26b-a4b-it:free",
+		"qwen/qwen3-next-80b-a3b-instruct:free",
+	}
+	for _, fid := range reliableFree {
+		if fid == originalModel {
+			continue
+		}
+		// Skip if already in candidates
+		already := false
+		for _, c := range candidates {
+			if c == fid {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+
+		if !isCooldown(fid) {
+			for _, m := range models {
+				if m.ID == fid {
+					candidates = append(candidates, fid)
+					break
+				}
+			}
+		}
+	}
+
+	// Tier 3.5: Other Free OpenRouter models
+	for _, m := range models {
+		already := false
+		if m.ID == originalModel {
+			already = true
+		}
+		for _, c := range candidates {
+			if c == m.ID {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+
+		isFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
+		if isFree && !isCooldown(m.ID) {
 			candidates = append(candidates, m.ID)
+		}
+	}
+
+	// Tier 4: Original requested model (if Paid & Curated & Complex)
+	if originalModel != "" && !isOriginalFree && !isCooldown(originalModel) && allowPaid && isComplexRequest {
+		isCurated := false
+		curatedPaid := []string{
+			"openai/gpt-4o-mini",
+			"google/gemini-2.0-flash-001",
+			"anthropic/claude-3.5-sonnet",
+		}
+		for _, cp := range curatedPaid {
+			if cp == originalModel {
+				isCurated = true
+				break
+			}
+		}
+		if isCurated {
+			candidates = append(candidates, originalModel)
+		}
+	}
+
+	// Tier 5: Curated Paid Fallbacks (Only for complex requests)
+	if isComplexRequest && allowPaid {
+		curatedPaid := []string{
+			"openai/gpt-4o-mini",
+			"google/gemini-2.0-flash-001",
+			"anthropic/claude-3.5-sonnet",
+		}
+		for _, paidID := range curatedPaid {
+			if !isCooldown(paidID) && paidID != originalModel {
+				exists := false
+				for _, c := range candidates {
+					if c == paidID {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					candidates = append(candidates, paidID)
+				}
+			}
 		}
 	}
 
@@ -560,17 +710,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		var targetURL string
 		var apiKey string
 
-		isNvidia := strings.HasPrefix(candidate, "nvidia/")
-		isOpenRouter := strings.Contains(candidate, ":free") || strings.HasPrefix(candidate, "openrouter/") || strings.HasPrefix(candidate, "google/") || strings.HasPrefix(candidate, "meta/") || strings.HasPrefix(candidate, "mistralai/") || strings.HasPrefix(candidate, "anthropic/")
+		isNvidia := strings.HasPrefix(candidate, "nvidia/") || 
+		           strings.HasPrefix(candidate, "meta/") || 
+				   strings.HasPrefix(candidate, "google/") || 
+				   strings.HasPrefix(candidate, "mistralai/") || 
+				   strings.HasPrefix(candidate, "microsoft/") ||
+				   strings.HasPrefix(candidate, "deepseek/")
 
-		if isOpenRouter && !isNvidia {
-			targetURL = "https://openrouter.ai/api/v1/chat/completions"
-			apiKey = os.Getenv("OPENROUTER_API_KEY")
-			// Only use OpenRouter if we have an OpenRouter key. 
-			// Do NOT fall back to OpenAI key here as it's a different provider.
-		} else if isNvidia {
+		if isNvidia {
 			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 			apiKey = os.Getenv("NVIDIA_API_KEY")
+		} else {
+			targetURL = "https://openrouter.ai/api/v1/chat/completions"
+			apiKey = os.Getenv("OPENROUTER_API_KEY")
 		}
 
 		// Skip models that need missing API keys (don't cooldown - might be available later)
@@ -603,6 +755,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			currentBody["model"] = candidate
 			// Strip :free suffix (provider doesn't use it)
 			currentBody["model"] = strings.TrimSuffix(candidate, ":free")
+			
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)
 
@@ -656,6 +809,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
 
+
 		log.Printf("Attempting request with model: %s (via %s)", candidate, targetURL)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -666,32 +820,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[DEBUG] Context canceled for %s, skipping cooldown", candidate)
 			}
 			continue
-		}
-
-		if (resp.StatusCode == 401 || resp.StatusCode == 404) && strings.Contains(targetURL, "nvidia.com") {
-			log.Printf("[WARN] NVIDIA direct API returned %d. Falling back to OpenRouter for %s...", resp.StatusCode, candidate)
-			io.Copy(ioutil.Discard, resp.Body)
-			resp.Body.Close()
-
-			// Retry via OpenRouter
-			targetURL = "https://openrouter.ai/api/v1/chat/completions"
-			apiKey = os.Getenv("OPENROUTER_API_KEY")
-			if apiKey == "" { apiKey = os.Getenv("OPENAI_API_KEY") }
-
-			req, _ = http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewBuffer(outboundBody))
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
-			resp, err = http.DefaultClient.Do(req)
-			if err != nil {
-				log.Printf("Fallback to OpenRouter for %s failed: %v", candidate, err)
-				if err != context.Canceled {
-					markCooldown(candidate)
-				} else {
-					log.Printf("[DEBUG] Context canceled during fallback for %s, skipping cooldown", candidate)
-				}
-				continue
-			}
 		}
 
 		if resp.StatusCode != http.StatusOK {
@@ -709,7 +837,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 			// If this was the last candidate, we have to return the error
 			if i == len(candidates)-1 {
-				copyResponse(w, resp)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(errorBody)
 				return
 			}
 			continue
@@ -1256,7 +1386,8 @@ func sanitizeBody(body map[string]interface{}) {
 }
 
 func handleOllamaChat(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "/api/chat is not fully implemented in the Freeride proxy. Please configure your client to use the OpenAI compatibility endpoint at /v1/chat/completions.", http.StatusNotImplemented)
+	log.Printf("[DEBUG] Mapping /api/chat to handleChatCompletions")
+	handleChatCompletions(w, r)
 }
 
 func cleanStaleCooldowns() {
@@ -1318,6 +1449,7 @@ func main() {
 	}
 
 	flag.BoolVar(&debugMode, "debug", false, "Enable debug logging")
+	flag.BoolVar(&allowPaid, "allow-paid", false, "Allow using paid models for complex requests or as fallback")
 	flag.Parse()
 
 	// Clean up stale cooldowns on startup
