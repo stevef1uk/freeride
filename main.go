@@ -462,6 +462,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	var bodyMap map[string]interface{}
 	var originalModel string
+	var isStream bool
+	isAnthropic := r.URL.Path == "/v1/messages" || r.URL.Path == "/api/v1/messages" || r.URL.Path == "/v1/v1/messages"
 	if err := json.Unmarshal(bodyBytes, &bodyMap); err == nil {
 		if debugMode {
 			var keys []string
@@ -476,9 +478,16 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				originalModel = "" // Force fallback to best available
 			}
 		}
+		if s, ok := bodyMap["stream"].(bool); ok {
+			isStream = s
+		}
 	} else {
 		log.Printf("[ERROR] Failed to unmarshal incoming JSON: %v", err)
 		bodyMap = nil
+	}
+
+	if debugMode {
+		log.Printf("[DEBUG] Path: %s, isAnthropic: %v, isStream: %v", r.URL.Path, isAnthropic, isStream)
 	}
 
 	models, _ := fetchFreeModels()
@@ -714,11 +723,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Model %s returned status %d. Skipping (not cooling down).", candidate, resp.StatusCode)
 		}
 
-		// Only translate SSE if it's a successful response
-		if (r.URL.Path == "/v1/responses") && resp.StatusCode == 200 {
-			translateSSE(w, resp)
-		} else if (r.URL.Path == "/v1/messages" || r.URL.Path == "/api/v1/messages") && resp.StatusCode == 200 {
-			translateAnthropicSSE(w, resp)
+		// Translate based on protocol
+		if resp.StatusCode == 200 {
+			if isAnthropic {
+				if isStream {
+					translateAnthropicSSE(w, resp)
+				} else {
+					translateAnthropicResponse(w, resp)
+				}
+			} else if r.URL.Path == "/v1/responses" {
+				translateSSE(w, resp)
+			} else {
+				copyResponse(w, resp)
+			}
 		} else {
 			copyResponse(w, resp)
 		}
@@ -920,22 +937,15 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						content, _ := delta["content"].(string)
-						reasoning, _ := delta["reasoning"].(string)
-
-						text := content
-						if text == "" {
-							text = reasoning
-						}
-
-						if text != "" {
+						if content != "" {
 							if debugMode {
-								log.Printf("[SPY-CHUNK] %s", text)
+								log.Printf("[SPY-CHUNK] %s", content)
 							}
 							// 3. response.output_text.delta
 							sendEvent("response.output_text.delta", map[string]interface{}{
 								"type":    "response.output_text.delta",
 								"item_id": itemID,
-								"delta":   text,
+								"delta":   content,
 							})
 						}
 					}
@@ -1356,6 +1366,58 @@ func main() {
 	}
 }
 
+func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read upstream response", http.StatusInternalServerError)
+		return
+	}
+
+	var openAIResp map[string]interface{}
+	if err := json.Unmarshal(body, &openAIResp); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(body)
+		return
+	}
+
+	choices, _ := openAIResp["choices"].([]interface{})
+	content := ""
+	if len(choices) > 0 {
+		choice, _ := choices[0].(map[string]interface{})
+		message, _ := choice["message"].(map[string]interface{})
+		content, _ = message["content"].(string)
+	}
+
+	anthropicResp := map[string]interface{}{
+		"id":    "msg_" + fmt.Sprintf("%d", time.Now().Unix()),
+		"type":  "message",
+		"role":  "assistant",
+		"model": "claude-3-5-sonnet-20241022",
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": content,
+			},
+		},
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"usage": map[string]interface{}{
+			"input_tokens":              0,
+			"output_tokens":             0,
+			"cache_creation_input_tokens": 0,
+			"cache_read_input_tokens":     0,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	respBytes, _ := json.Marshal(anthropicResp)
+	if debugMode {
+		log.Printf("[TRANS-JSON] %s", string(respBytes))
+	}
+	w.Write(respBytes)
+}
+
 func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1375,6 +1437,8 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			"role":    "assistant",
 			"model":   modelName,
 			"content": []interface{}{},
+			"tools":   []interface{}{},
+			"metadata": map[string]interface{}{},
 			"usage": map[string]interface{}{
 				"input_tokens":              0,
 				"output_tokens":             0,
@@ -1397,6 +1461,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	})
 
 	maxIndex := 0
+	hasContent := false
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1404,7 +1469,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
-		log.Printf("[DEBUG] Raw SSE data: %s", data)
+		if debugMode {
+			log.Printf("[DEBUG] Raw SSE data: %s", data)
+		}
 		if data == "[DONE]" {
 			break
 		}
@@ -1412,28 +1479,23 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
 			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
+					if finish, ok := choice["finish_reason"].(string); ok && finish == "length" && !hasContent {
+						log.Printf("[WARN] Model hit token limit without sending content (reasoning loop detected).")
+						// We can't really "return an error" easily here because we've already started the stream
+						// but we can at least log it.
+					}
+
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						// 1. Text Content
 						content, _ := delta["content"].(string)
-						reasoning := ""
-						if r, ok := delta["reasoning"].(string); ok && r != "" {
-							reasoning = r
-						} else if r, ok := delta["reasoning_content"].(string); ok && r != "" {
-							reasoning = r
-						}
-
-						if content != "" || reasoning != "" {
-							fullContent := content
-							if reasoning != "" {
-								fullContent = reasoning + content
-							}
-
+						if content != "" {
+							hasContent = true
 							sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
 								"type":  "content_block_delta",
 								"index": 0,
 								"delta": map[string]interface{}{
 									"type": "text_delta",
-									"text": fullContent,
+									"text": content,
 								},
 							})
 						}
@@ -1502,6 +1564,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
+			"input_tokens":                0,
 			"output_tokens":               0,
 			"cache_creation_input_tokens": 0,
 			"cache_read_input_tokens":     0,
