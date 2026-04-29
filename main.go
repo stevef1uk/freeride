@@ -1057,9 +1057,9 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 			break
 		}
 
-		if debugMode {
-			log.Printf("[RAW-SSE] %s", data)
-		}
+// if debugMode {
+// 	log.Printf("[RAW-SSE] %s", data)
+// }
 
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
@@ -1068,9 +1068,9 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						content, _ := delta["content"].(string)
 						if content != "" {
-							if debugMode {
-								log.Printf("[SPY-CHUNK] %s", content)
-							}
+// if debugMode {
+// 	log.Printf("[SPY-CHUNK] %s", content)
+// }
 							// 3. response.output_text.delta
 							sendEvent("response.output_text.delta", map[string]interface{}{
 								"type":    "response.output_text.delta",
@@ -1515,28 +1515,67 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 
 	choices, _ := openAIResp["choices"].([]interface{})
 	content := ""
+	var anthropicContent []map[string]interface{}
+
 	if len(choices) > 0 {
 		choice, _ := choices[0].(map[string]interface{})
 		message, _ := choice["message"].(map[string]interface{})
 		content, _ = message["content"].(string)
+
+		if content != "" {
+			anthropicContent = append(anthropicContent, map[string]interface{}{
+				"type": "text",
+				"text": content,
+			})
+		}
+
+		if toolCalls, ok := message["tool_calls"].([]interface{}); ok {
+			for _, tc := range toolCalls {
+				if tcMap, ok := tc.(map[string]interface{}); ok {
+					if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+						name, _ := fn["name"].(string)
+						args, _ := fn["arguments"].(string)
+						id, _ := tcMap["id"].(string)
+
+						if name != "" {
+							repairedArgs := repairJSONArguments(args)
+							var input map[string]interface{}
+							if err := json.Unmarshal([]byte(repairedArgs), &input); err != nil {
+								// If unmarshal still fails, provide empty input to prevent client crash
+								input = map[string]interface{}{}
+							}
+
+							anthropicContent = append(anthropicContent, map[string]interface{}{
+								"type":  "tool_use",
+								"id":    id,
+								"name":  name,
+								"input": input,
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(anthropicContent) == 0 {
+		anthropicContent = append(anthropicContent, map[string]interface{}{
+			"type": "text",
+			"text": "",
+		})
 	}
 
 	anthropicResp := map[string]interface{}{
-		"id":    "msg_" + fmt.Sprintf("%d", time.Now().Unix()),
-		"type":  "message",
-		"role":  "assistant",
-		"model": "claude-3-5-sonnet-20241022",
-		"content": []map[string]interface{}{
-			{
-				"type": "text",
-				"text": content,
-			},
-		},
-		"stop_reason":   "end_turn",
+		"id":      "msg_" + fmt.Sprintf("%d", time.Now().Unix()),
+		"type":    "message",
+		"role":    "assistant",
+		"model":   "claude-3-5-sonnet-20241022",
+		"content": anthropicContent,
+		"stop_reason":   "tool_use",
 		"stop_sequence": nil,
 		"usage": map[string]interface{}{
-			"input_tokens":              0,
-			"output_tokens":             0,
+			"input_tokens":                0,
+			"output_tokens":               0,
 			"cache_creation_input_tokens": 0,
 			"cache_read_input_tokens":     0,
 		},
@@ -1594,6 +1633,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 
 	maxIndex := 0
 	hasContent := false
+	toolCallArgs := make(map[int]string)
+	toolCallNames := make(map[int]string)
+	toolCallIDs := make(map[int]string)
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1601,9 +1643,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
-		if debugMode {
-			log.Printf("[DEBUG] Raw SSE data: %s", data)
-		}
+// if debugMode {
+// 	log.Printf("[DEBUG] Raw SSE data: %s", data)
+// }
 		if data == "[DONE]" {
 			break
 		}
@@ -1647,6 +1689,8 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 										// If it's the start of a tool call (has name)
 										if name != "" {
 											id, _ := tcMap["id"].(string)
+											toolCallNames[index] = name
+											toolCallIDs[index] = id
 											sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
 												"type":  "content_block_start",
 												"index": index,
@@ -1659,16 +1703,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 											})
 										}
 
-										// If it has arguments (delta)
+										// If it has arguments (delta) - accumulate for later repair
 										if args != "" {
-											sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
-												"type":  "content_block_delta",
-												"index": index,
-												"delta": map[string]interface{}{
-													"type":         "input_json_delta",
-													"partial_json": args,
-												},
-											})
+											toolCallArgs[index] += args
 										}
 									}
 								}
@@ -1678,6 +1715,25 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 				}
 			}
 		}
+	}
+
+	// Post-process: repair JSON arguments and send corrected deltas
+	for index, args := range toolCallArgs {
+		if args == "" {
+			continue
+		}
+		repairedArgs := repairJSONArguments(args)
+		if repairedArgs != args {
+			log.Printf("[DEBUG] Repaired JSON for tool call index %d: original=%q, repaired=%q", index, args, repairedArgs)
+		}
+		sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
+			"type":  "content_block_delta",
+			"index": index,
+			"delta": map[string]interface{}{
+				"type":         "input_json_delta",
+				"partial_json": repairedArgs,
+			},
+		})
 	}
 
 	// 4. content_block_stop for ALL blocks
@@ -1713,10 +1769,76 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 
 func sendAnthropicEvent(w http.ResponseWriter, flusher http.Flusher, evType string, data interface{}) {
 	b, _ := json.Marshal(data)
-	log.Printf("[SSE] %s: %s", evType, string(b))
+	// log.Printf("[SSE] %s: %s", evType, string(b))
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evType, string(b))
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+func repairJSONArguments(args string) string {
+	if args == "" {
+		return args
+	}
+
+	// 1. Try to parse the whole thing first
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(args), &data); err == nil {
+		// If it's valid JSON, check for double-encoded fields
+		changed := false
+		for k, v := range data {
+			if s, ok := v.(string); ok && (strings.HasPrefix(s, "[") || strings.HasPrefix(s, "{")) {
+				var nested interface{}
+				if err := json.Unmarshal([]byte(s), &nested); err == nil {
+					data[k] = nested
+					changed = true
+				}
+			}
+		}
+		if changed {
+			if b, err := json.Marshal(data); err == nil {
+				return string(b)
+			}
+		}
+		return args
+	}
+
+	// 2. If it's NOT valid JSON, it's likely a partial or broken chunk.
+	// We try to do some aggressive regex fixes for common Llama/Mistral errors.
+	repaired := args
+	
+	// Fix string-wrapped arrays: "todos": "[...]" -> "todos": [...]
+	// We look for "key": "[ or "key": "{ and try to unescape the internal content
+	re := regexp.MustCompile(`"([^"]+)"\s*:\s*"(\[.*?\]|\{.*?\})"`)
+	repaired = re.ReplaceAllStringFunc(repaired, func(match string) string {
+		sub := re.FindStringSubmatch(match)
+		if len(sub) == 3 {
+			key := sub[1]
+			val := sub[2]
+			// Unescape the value
+			var unquoted string
+			if err := json.Unmarshal([]byte(`"`+val+`"`), &unquoted); err == nil {
+				// Check if the unquoted value is valid JSON
+				var dummy interface{}
+				if err := json.Unmarshal([]byte(unquoted), &dummy); err == nil {
+					return fmt.Sprintf(`"%s":%s`, key, unquoted)
+				}
+			}
+		}
+		return match
+	})
+
+	// 3. Fallback: try to just fix the "todos" field specifically if the above failed
+	repaired = regexp.MustCompile(`"todos"\s*:\s*"\[`).ReplaceAllString(repaired, `"todos": [`)
+	repaired = regexp.MustCompile(`"todos"\s*:\s*"\{`).ReplaceAllString(repaired, `"todos": {`)
+
+	// Try one last parse
+	if err := json.Unmarshal([]byte(repaired), &data); err == nil {
+		if b, err := json.Marshal(data); err == nil {
+			return string(b)
+		}
+	}
+
+	return repaired
 }
 
