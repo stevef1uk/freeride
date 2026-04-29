@@ -1003,6 +1003,11 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 		Data   []openAIModel `json:"data"`
 	}
 	res.Object = "list"
+	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet-20241022", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet", Created: 1678888888, OwnedBy: "anthropic"})
+	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet (Legacy)", Created: 1678888888, OwnedBy: "anthropic"})
+	res.Data = append(res.Data, openAIModel{ID: "gpt-4o", Type: "model", Object: "model", DisplayName: "GPT-4o", Created: 1678888888, OwnedBy: "openai"})
+	res.Data = append(res.Data, openAIModel{ID: "gpt-4", Type: "model", Object: "model", DisplayName: "GPT-4", Created: 1678888888, OwnedBy: "openai"})
+
 	for _, m := range models {
 		res.Data = append(res.Data, openAIModel{
 			ID:          m.ID,
@@ -1024,10 +1029,6 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 			OwnedBy:     "nvidia",
 		})
 	}
-	res.Data = append(res.Data, openAIModel{ID: "gpt-4o", Type: "model", Object: "model", DisplayName: "GPT-4o", Created: 1678888888, OwnedBy: "openai"})
-	res.Data = append(res.Data, openAIModel{ID: "gpt-4", Type: "model", Object: "model", DisplayName: "GPT-4", Created: 1678888888, OwnedBy: "openai"})
-	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet-20241022", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet", Created: 1678888888, OwnedBy: "anthropic"})
-	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet (Legacy)", Created: 1678888888, OwnedBy: "anthropic"})
 	json.NewEncoder(w).Encode(res)
 }
 
@@ -1408,14 +1409,26 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						// 1. Text Content
-						if content, ok := delta["content"].(string); ok && content != "" {
-							// 3. content_block_delta
+						content, _ := delta["content"].(string)
+						reasoning := ""
+						if r, ok := delta["reasoning"].(string); ok && r != "" {
+							reasoning = r
+						} else if r, ok := delta["reasoning_content"].(string); ok && r != "" {
+							reasoning = r
+						}
+
+						if content != "" || reasoning != "" {
+							fullContent := content
+							if reasoning != "" {
+								fullContent = reasoning + content
+							}
+
 							sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
 								"type":  "content_block_delta",
 								"index": 0,
 								"delta": map[string]interface{}{
 									"type": "text_delta",
-									"text": content,
+									"text": fullContent,
 								},
 							})
 						}

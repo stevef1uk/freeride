@@ -64,9 +64,10 @@ Claude Code works perfectly with Freeride by translating Anthropic's Messages AP
    export ANTHROPIC_BASE_URL="http://localhost:11434"
    export ANTHROPIC_API_KEY="sk-ant-api03-dummy-key-that-is-long-enough-to-pass-validation-abcdefghijklmnopqrstuvwxyz012345"
    ```
-3. **Run**:
+3. **Run in Autonomous Mode**:
+   Always use the skip-permissions flag to allow agents to work without manual approval in the background:
    ```bash
-   claude
+   claude --dangerously-skip-permissions
    ```
 
 #### Key Translation Features
@@ -117,45 +118,55 @@ gt mayor attach    # Attach to session
 
 Or explicitly specify the agent:
 ```bash
-gt mayor start --agent opencode
+gt mayor start --agent claude
 ```
 
-### 6. GasTown (via OpenRouter directly)
+### 6. Beads & Dolt Server Optimization
 
-**Alternative: Use opencode with OpenRouter directly (no local proxy needed)**
+To prevent timeouts and "database locked" errors when running multiple agents (Mayor, Deacon, Witness, Dashboard) in parallel, always use a **centralized Dolt server** instead of the default embedded mode.
 
-For GasTown rigs (like `fin/`), configure opencode to use OpenRouter:
-
-1. **Create a wrapper script** (e.g., `opencode-wrapper.sh` in your rig):
+1. **Start the Dolt Server** in your Town root:
    ```bash
-   #!/bin/bash
-   exec env -i \
-       HOME="$HOME" PATH="$PATH" USER="$USER" SHELL="$SHELL" TERM="$TERM" \
-       OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
-       OPENAI_API_KEY="$OPENROUTER_API_KEY" \
-       /path/to/opencode "$@"
+   cd gt
+   mkdir -p .dolt-data
+   cd .dolt-data
+   dolt sql-server -H 127.0.0.1 -P 3307 &
    ```
 
-2. **Update rig config.json**:
-   ```json
-   {
-     "default_agent": "opencode",
-     "agents": {
-       "opencode": {
-         "provider": "openai",
-         "command": "/path/to/rig/opencode-wrapper.sh",
-         "args": []
-       }
-     }
-   }
-   ```
-
-3. **Export API key and start mayor**:
+2. **Configure Beads** to use the server:
+   Run these commands in every Rig and in the Town root:
    ```bash
-   export OPENROUTER_API_KEY="sk-or-v1-..."
-   gt mayor start --agent opencode
-   gt mayor attach
+   bd config set dolt.port 3307
+   bd config set dolt.address 127.0.0.1
+   bd config set dolt.auto-start false
+   bd config set dolt.idle-timeout 0
    ```
+
+3. **Multi-Rig Routing**: If using multiple rigs on one server, specify the database name for each rig:
+   ```bash
+   bd config set dolt.database <rig_name>
+   ```
+
+### 7. Troubleshooting: GT_TOWN_ROOT
+
+If you move your GasTown directory or create a new one, your shell or tmux session might still be pointing to the old one. Always verify your root:
+```bash
+export GT_TOWN_ROOT=/path/to/your/gt
+gt daemon stop
+gt daemon start
+```
+
+### 8. Hard Reset / Restoration
+
+If your GasTown becomes corrupted or you delete the metadata:
+1. **Re-install**: `gt install --force` in the Town root.
+2. **Re-initialize Beads**: `bd init --force --prefix gt` (follow prompts).
+3. **Reconnect Server**: Re-run the `bd config set dolt.port 3307` commands.
+4. **Restore Agents**: `gt doctor --fix` will recreate missing agent beads.
+
+### 9. Power Model Spoofing (Tool Support)
+
+Freeride automatically advertises `claude-3-5-sonnet-20241022` and `gpt-4o` at the top of its model list. **Always select these names** in your client configuration. Even though the proxy will route to a **free model** (like Llama 3.1 70B), using these names tricks Claude Code into enabling its full suite of tools (Write, Edit, Task, etc.) which are normally disabled for smaller models.
 
 ## Supported Endpoints
 
