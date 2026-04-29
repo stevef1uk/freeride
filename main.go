@@ -546,6 +546,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Build candidates list from BOTH OpenRouter AND NVIDIA free models
 	var candidates []string
+	candidates = append(candidates, "meta/llama-3.3-70b-instruct")
+	log.Printf("[DEBUG] Final Candidates: %v", candidates)
 	isComplexRequest := isComplex(bodyMap)
 
 	// Tier 1: Original requested model (if Free)
@@ -695,7 +697,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			candidates = append(candidates, models[0].ID)
 			log.Printf("[DEBUG] using OpenRouter fallback: %s", models[0].ID)
 		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) {
-			candidates = append(candidates, toolCapableNvidia[0].ID)
+			candidates = append([]string{"meta-llama/llama-3.3-70b-instruct"}, candidates...)
 			log.Printf("[DEBUG] using NVIDIA tool-capable fallback: %s", toolCapableNvidia[0].ID)
 		} else {
 			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
