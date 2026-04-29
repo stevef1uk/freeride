@@ -592,7 +592,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			log.Printf("Request to %s failed: %v", candidate, err)
-			markCooldown(candidate)
+			if err != context.Canceled {
+				markCooldown(candidate)
+			} else {
+				log.Printf("[DEBUG] Context canceled for %s, skipping cooldown", candidate)
+			}
 			continue
 		}
 
@@ -613,7 +617,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			resp, err = http.DefaultClient.Do(req)
 			if err != nil {
 				log.Printf("Fallback to OpenRouter for %s failed: %v", candidate, err)
-				markCooldown(candidate)
+				if err != context.Canceled {
+					markCooldown(candidate)
+				} else {
+					log.Printf("[DEBUG] Context canceled during fallback for %s, skipping cooldown", candidate)
+				}
 				continue
 			}
 		}
