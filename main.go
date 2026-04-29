@@ -704,8 +704,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
-			return
 		}
+	}
+	candidates = []string{
+		"meta/llama-3.3-70b-instruct",
+		"abacusai/dracarys-llama-3.1-70b-instruct",
+		"ai21labs/jamba-1.5-large-instruct",
+		"mistralai/mixtral-8x22b-instruct-v0.1",
+		"qwen/qwen3-next-80b-a3b-instruct",
 	}
 	for i, candidate := range candidates {
 		// Determine which API to use based on model prefix
@@ -717,6 +723,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				   strings.HasPrefix(candidate, "google/") || 
 				   strings.HasPrefix(candidate, "mistralai/") || 
 				   strings.HasPrefix(candidate, "microsoft/") ||
+				   strings.HasPrefix(candidate, "qwen/") ||
+				   strings.HasPrefix(candidate, "abacusai/") ||
+				   strings.HasPrefix(candidate, "ai21labs/") ||
+				   strings.HasPrefix(candidate, "01-ai/")
 				   strings.HasPrefix(candidate, "deepseek/")
 
 		if isNvidia {
