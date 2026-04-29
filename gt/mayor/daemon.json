@@ -1,0 +1,48 @@
+{
+  "type": "daemon-patrol-config",
+  "version": 1,
+  "patrols": {
+    "handler": {
+      "enabled": true
+    },
+    "dolt_backup": {
+      "enabled": true,
+      "interval": "15m"
+    },
+    "jsonl_git_backup": {
+      "enabled": true,
+      "interval": "15m",
+      "scrub": true
+    },
+    "wisp_reaper": {
+      "enabled": true,
+      "interval": "30m",
+      "max_age": "24h",
+      "delete_age": "168h"
+    },
+    "doctor_dog": {
+      "enabled": true,
+      "interval": "5m"
+    },
+    "compactor_dog": {
+      "enabled": true,
+      "interval": "24h",
+      "threshold": 2000
+    },
+    "checkpoint_dog": {
+      "enabled": true,
+      "interval": "10m"
+    },
+    "scheduled_maintenance": {
+      "enabled": true,
+      "window": "03:00",
+      "interval": "daily",
+      "threshold": 1000
+    },
+    "main_branch_test": {
+      "enabled": true,
+      "interval": "30m",
+      "timeout": "10m"
+    }
+  }
+}
