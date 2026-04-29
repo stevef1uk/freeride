@@ -1363,21 +1363,26 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	w.WriteHeader(resp.StatusCode)
 
 	flusher, _ := w.(http.Flusher)
-	respID := "msg_" + fmt.Sprintf("%d", time.Now().Unix())
+	messageID := "msg_" + fmt.Sprintf("%d", time.Now().Unix())
+	modelName := "claude-3-5-sonnet-20241022"
 
 	// 1. message_start
 	sendAnthropicEvent(w, flusher, "message_start", map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
-			"id":      respID,
+			"id":      messageID,
 			"type":    "message",
 			"role":    "assistant",
+			"model":   modelName,
 			"content": []interface{}{},
-			"model":   "claude-3-5-sonnet-20241022",
 			"usage": map[string]interface{}{
-				"input_tokens":  0,
-				"output_tokens": 0,
+				"input_tokens":              0,
+				"output_tokens":             0,
+				"cache_creation_input_tokens": 0,
+				"cache_read_input_tokens":     0,
 			},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
 		},
 	})
 
@@ -1497,8 +1502,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
-			"input_tokens":  0,
-			"output_tokens": 0,
+			"output_tokens":               0,
+			"cache_creation_input_tokens": 0,
+			"cache_read_input_tokens":     0,
 		},
 	})
 
