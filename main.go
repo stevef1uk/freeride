@@ -213,14 +213,8 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 
 	apiKey := os.Getenv("NVIDIA_API_KEY")
 	if apiKey == "" {
-		log.Printf("[DEBUG] NVIDIA_API_KEY not set, using static list for OpenRouter fallback")
-		return []nvidiaModel{
-			{ID: "nvidia/nemotron-3-super-120b-a12b"},
-			{ID: "nvidia/nemotron-nano-9b-v2"},
-			{ID: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"},
-			{ID: "nvidia/nemotron-3-nano-30b-a3b"},
-			{ID: "nvidia/nemotron-nano-12b-v2-vl"},
-		}, nil
+		log.Printf("[DEBUG] NVIDIA_API_KEY not set, skipping NVIDIA models")
+		return nil, nil
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", "https://integrate.api.nvidia.com/v1/models", nil)
@@ -498,15 +492,17 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		var targetURL string
 		var apiKey string
 
-		if strings.HasPrefix(candidate, "nvidia/") || strings.HasPrefix(candidate, "nvidia/") {
-			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
-			apiKey = os.Getenv("NVIDIA_API_KEY")
-		} else {
+		isNvidia := strings.HasPrefix(candidate, "nvidia/")
+		isOpenRouter := strings.Contains(candidate, ":free") || strings.HasPrefix(candidate, "google/") || strings.HasPrefix(candidate, "meta/") || strings.HasPrefix(candidate, "mistralai/") || strings.HasPrefix(candidate, "anthropic/")
+
+		if isOpenRouter && !isNvidia {
 			targetURL = "https://openrouter.ai/api/v1/chat/completions"
 			apiKey = os.Getenv("OPENROUTER_API_KEY")
-			if apiKey == "" {
-				apiKey = os.Getenv("OPENAI_API_KEY")
-			}
+			// Only use OpenRouter if we have an OpenRouter key. 
+			// Do NOT fall back to OpenAI key here as it's a different provider.
+		} else if isNvidia {
+			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
+			apiKey = os.Getenv("NVIDIA_API_KEY")
 		}
 
 		// Skip models that need missing API keys (don't cooldown - might be available later)
@@ -550,8 +546,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				toolCount := 0
 				if tools, ok := currentBody["tools"].([]interface{}); ok {
 					toolCount = len(tools)
+				} else if tools, ok := currentBody["tools"].([]map[string]interface{}); ok {
+					toolCount = len(tools)
 				}
 				log.Printf("[DEBUG] Request to %s: %d messages, %d tools", candidate, msgCount, toolCount)
+				if msgCount > 0 {
+					msgs, _ := currentBody["messages"].([]interface{})
+					if len(msgs) > 0 {
+						first, _ := msgs[0].(map[string]interface{})
+						last, _ := msgs[len(msgs)-1].(map[string]interface{})
+						log.Printf("[DEBUG] First Msg: %v", first["content"])
+						log.Printf("[DEBUG] Last Msg: %v", last["content"])
+					}
+				}
 				// Save to file for inspection
 				os.WriteFile("last_payload.json", outboundBody, 0644)
 			}
@@ -589,8 +596,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if resp.StatusCode == 401 && strings.Contains(targetURL, "nvidia.com") {
-			log.Printf("[WARN] NVIDIA direct API returned 401. Falling back to OpenRouter for %s...", candidate)
+		if (resp.StatusCode == 401 || resp.StatusCode == 404) && strings.Contains(targetURL, "nvidia.com") {
+			log.Printf("[WARN] NVIDIA direct API returned %d. Falling back to OpenRouter for %s...", resp.StatusCode, candidate)
 			io.Copy(ioutil.Discard, resp.Body)
 			resp.Body.Close()
 
@@ -614,15 +621,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("Model %s returned status %d. Target: %s", candidate, resp.StatusCode, targetURL)
 			
+			// Log error body
+			errorBody, _ := ioutil.ReadAll(resp.Body)
+			log.Printf("[ERROR] Model %s response body: %s", candidate, string(errorBody))
+			resp.Body.Close()
+
 			// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
-			// Don't cooldown on 404 (model not found) - just skip it
 			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 				markCooldown(candidate)
 			}
-
-			// Discard body so connection can be reused
-			io.Copy(ioutil.Discard, resp.Body)
-			resp.Body.Close()
 
 			// If this was the last candidate, we have to return the error
 			if i == len(candidates)-1 {
@@ -1083,11 +1090,14 @@ func sanitizeBody(body map[string]interface{}) {
 	// We need to handle both and normalise to Chat Completions format for OpenRouter.
 	if tools, ok := body["tools"].([]interface{}); ok {
 		log.Printf("[DEBUG] Received %d tools from client", len(tools))
-		var newTools []map[string]interface{}
-		for _, t := range tools {
+		var newTools []interface{}
+		for i, t := range tools {
 			if tMap, ok := t.(map[string]interface{}); ok {
 				var name string
 				var fn map[string]interface{}
+
+				// Log tool keys for debugging
+				log.Printf("[DEBUG] Tool %d keys: %v", i, tMap)
 
 				// Case 1: OpenAI Chat Completions format (already correct)
 				if nested, ok := tMap["function"].(map[string]interface{}); ok {
@@ -1122,8 +1132,8 @@ func sanitizeBody(body map[string]interface{}) {
 					continue
 				}
 
-				// Filter out internal tools that cause validation bloat
-				if name == "Agent" || name == "TaskUpdate" || name == "TaskCreate" || name == "TaskCreate_deprecated" {
+				// Filter disabled for debugging
+				if false && (name == "Agent" || name == "TaskUpdate" || name == "TaskCreate" || name == "TaskCreate_deprecated") {
 					continue
 				}
 				newTools = append(newTools, tMap)
@@ -1293,6 +1303,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
+		log.Printf("[DEBUG] Raw SSE data: %s", data)
 		if data == "[DONE]" {
 			break
 		}
@@ -1378,6 +1389,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
+			"input_tokens":  0,
 			"output_tokens": 0,
 		},
 	})
@@ -1392,6 +1404,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 
 func sendAnthropicEvent(w http.ResponseWriter, flusher http.Flusher, evType string, data interface{}) {
 	b, _ := json.Marshal(data)
+	log.Printf("[SSE] %s: %s", evType, string(b))
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evType, string(b))
 	if flusher != nil {
 		flusher.Flush()

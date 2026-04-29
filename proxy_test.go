@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
@@ -252,5 +254,100 @@ func TestClaudeCodeAnthropicProtocol(t *testing.T) {
 	}
 	if !foundDelta {
 		t.Error("Did not find 'content_block_delta' event (Anthropic protocol)")
+	}
+}
+func TestLargeToolSet(t *testing.T) {
+	model := getAvailableModel(t)
+	var tools []map[string]interface{}
+	for i := 0; i < 17; i++ {
+		tools = append(tools, map[string]interface{}{
+			"name":        fmt.Sprintf("tool_%d", i),
+			"description": fmt.Sprintf("Description for tool %d", i),
+			"input_schema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"arg": map[string]interface{}{"type": "string"},
+				},
+			},
+		})
+	}
+
+	payload := map[string]interface{}{
+		"model":      model,
+		"messages":   []map[string]interface{}{{"role": "user", "content": "Hello"}},
+		"tools":      tools,
+		"max_tokens": 100,
+		"stream":     true,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(proxyURL+"/v1/messages", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to connect to proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Large tool set request failed with status %d", resp.StatusCode)
+		errorBody, _ := ioutil.ReadAll(resp.Body)
+		t.Logf("Error body: %s", string(errorBody))
+	}
+}
+
+func TestLargeSystemPrompt(t *testing.T) {
+	model := getAvailableModel(t)
+	// Create a very large system prompt (10KB)
+	systemPrompt := strings.Repeat("Follow these instructions carefully. ", 200)
+	
+	payload := map[string]interface{}{
+		"model": model,
+		"system": []map[string]interface{}{
+			{"type": "text", "text": systemPrompt},
+		},
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "Hello"},
+		},
+		"max_tokens": 100,
+		"stream":     true,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(proxyURL+"/v1/messages", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to connect to proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Large system prompt request failed with status %d", resp.StatusCode)
+	}
+}
+
+func TestInvalidToolCall(t *testing.T) {
+	model := getAvailableModel(t)
+	// Test if proxy handles malformed tool definitions gracefully
+	payload := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]interface{}{{"role": "user", "content": "Hello"}},
+		"tools": []map[string]interface{}{
+			{
+				"name": "invalid_tool",
+				// Missing description and input_schema
+			},
+		},
+		"max_tokens": 100,
+		"stream":     true,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(proxyURL+"/v1/messages", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to connect to proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// It should either sanitize it or skip it, but NOT crash or return 503 if models are available
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		t.Errorf("Proxy returned 503 for invalid tool, expected better handling")
 	}
 }
