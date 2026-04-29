@@ -101,43 +101,23 @@ GitHub Copilot is highly proprietary and uses internal authentication that often
 
 ### 5. GasTown (via Freeride Proxy)
 
-**Status: Fully Supported**
+**Configure GT to use opencode by default:**
 
-GasTown agents can use this proxy as a cost-free backend for all model inference. The most reliable way to configure it is using a **wrapper script** and a **PATH override**.
-
-#### Recommended Setup
-1. **Create a wrapper script** (e.g., `bin/claude`) in your rig):
-   ```bash
-   #!/bin/bash
-   export ANTHROPIC_BASE_URL="http://localhost:11434"
-   export ANTHROPIC_API_KEY="sk-ant-api03-..."
-   # Use the autonomous flag to prevent interactive prompts
-   exec /bin/claude --dangerously-skip-permissions "$@"
-   ```
-2. **Update your rig `config.json`** to use this script:
-   ```json
-   "agents": {
-     "claude": {
-       "provider": "openai",
-       "command": "/path/to/your/rig/bin/claude",
-       "args": []
-     }
-   }
-   ```
-3. **Override the PATH** before starting the rig to ensure all sub-processes hit the wrapper:
-   ```bash
-   export PATH="/path/to/your/rig/bin:$PATH"
-   gt up
-   ```
-
-**Key Features for GasTown**:
-- **Universal Tool Support**: Automatically translates Claude's XML tool calls (`read_file`, `write_to_file`, `run_terminal_command`) into OpenAI-compatible function calls.
-- **Autonomous Execution**: Supports the `--dangerously-skip-permissions` flag for 100% human-free agent operation.
-- **Beads Protocol**: Automatically handles the specialized SSE format used by OpenCode agents.
-
-Then bring up the infrastructure:
 ```bash
-gt up
+cd /path/to/rig
+gt config default-agent opencode
+```
+
+**Start the Mayor:**
+
+```bash
+gt mayor start      # Uses default_agent from config
+gt mayor attach    # Attach to session
+```
+
+Or explicitly specify the agent:
+```bash
+gt mayor start --agent opencode
 ```
 
 ### 6. GasTown (via OpenRouter directly)
