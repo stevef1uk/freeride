@@ -1780,6 +1780,7 @@ func repairJSONArguments(args string) string {
 	if args == "" {
 		return args
 	}
+	original := args
 
 	// 1. Try to parse the whole thing first
 	var data map[string]interface{}
@@ -1837,6 +1838,10 @@ func repairJSONArguments(args string) string {
 		if b, err := json.Marshal(data); err == nil {
 			return string(b)
 		}
+	}
+
+	if repaired != original {
+		log.Printf("[DEBUG] JSON Repaired: %s -> %s", original, repaired)
 	}
 
 	return repaired
