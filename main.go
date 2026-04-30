@@ -1525,6 +1525,10 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 		return
 	}
 
+	if debugMode {
+		log.Printf("[DEBUG] Raw OpenAI Response: %s", string(body))
+	}
+
 	choices, _ := openAIResp["choices"].([]interface{})
 	content := ""
 	var anthropicContent []map[string]interface{}
