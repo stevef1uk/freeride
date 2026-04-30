@@ -1399,6 +1399,27 @@ func sanitizeBody(body map[string]interface{}) {
 		})
 		delete(body, "prompt")
 	}
+
+	// 6. NVIDIA/Mistral Specific: Strip 'tool_choice' if it's "auto" (avoids 400 errors)
+	// and strip 'parallel_tool_calls' which NVIDIA NIM doesn't support yet for all models
+	model, _ := body["model"].(string)
+	isNvidiaModel := strings.HasPrefix(model, "nvidia/") || 
+		           strings.HasPrefix(model, "meta/") || 
+				   strings.HasPrefix(model, "google/") || 
+				   strings.HasPrefix(model, "mistralai/") || 
+				   strings.HasPrefix(model, "microsoft/") ||
+				   strings.HasPrefix(model, "qwen/") ||
+				   strings.HasPrefix(model, "abacusai/") ||
+				   strings.HasPrefix(model, "ai21labs/") ||
+				   strings.HasPrefix(model, "01-ai/") ||
+				   strings.HasPrefix(model, "deepseek/")
+
+	if isNvidiaModel {
+		if tc, ok := body["tool_choice"].(string); ok && tc == "auto" {
+			delete(body, "tool_choice")
+		}
+		delete(body, "parallel_tool_calls")
+	}
 }
 
 func handleOllamaChat(w http.ResponseWriter, r *http.Request) {
@@ -1898,14 +1919,38 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 		if len(m) == 2 {
 			command := strings.TrimSpace(m[1])
 			if command != "" {
-				tools = append(tools, map[string]interface{}{
-					"type": "tool_use",
-					"id":   "call_md_" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					"name": "run_terminal_command",
-					"input": map[string]interface{}{
-						"command": command,
-					},
-				})
+				command = strings.TrimSpace(command)
+				
+				// Normalization: Strip common hallucinations
+				if strings.HasPrefix(command, "gt hook ") {
+					parts := strings.Fields(command)
+					if len(parts) > 2 && parts[2] == "check" {
+						command = "gt hook"
+					}
+				}
+
+				if command != "" {
+					// Deduplication logic
+					exists := false
+					for _, existing := range tools {
+						if existingInput, ok := existing["input"].(map[string]interface{}); ok {
+							if existingInput["command"] == command {
+								exists = true
+								break
+							}
+						}
+					}
+					if !exists {
+						tools = append(tools, map[string]interface{}{
+							"type": "tool_use",
+							"id":   "call_ext_" + fmt.Sprintf("%d_%d", time.Now().UnixNano(), len(tools)),
+							"name": "run_terminal_command",
+							"input": map[string]interface{}{
+								"command": command,
+							},
+						})
+					}
+				}
 			}
 		}
 	}
