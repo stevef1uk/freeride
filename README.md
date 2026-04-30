@@ -9,6 +9,7 @@ It runs locally on port `:11434` (Ollama's default port), intercepting requests 
 - **Direct NVIDIA NIM Integration**: Now supports direct, zero-cost routing to `integrate.api.nvidia.com` for high-performance partner models (Meta Llama, Mistral, Google Gemma, etc.).
 - **Strict Cost Optimization**: Eliminated unintended paid fallbacks. If free models are exhausted or in cooldown, the proxy refuses to route to paid models, returning a 503 error instead to protect your credits.
 - **Improved Prefix Handling**: Automatically manages model prefixes (e.g., `meta/`, `google/`) for direct API compatibility, ensuring requests to partner models route correctly.
+- **Proxy-Magic (Resilient Tool-Use)**: Implemented a fallback translation layer that intercepts conversational command mentions (e.g., "I will now run `gt hook`") and markdown code blocks. These are automatically converted into official tool calls, enabling autonomous tool-use for free-tier models (Mixtral/Llama) that fail to adhere to the standard JSON tool API.
 - **Robust Tiered Selection**:
   - **Tier 1**: Prioritizes the original requested model if it is confirmed free.
   - **Tier 2**: Falls back to tool-capable NVIDIA NIM models (highly reliable and fast).
@@ -101,6 +102,19 @@ Freeride automatically advertises `claude-3-5-sonnet-20241022` and `gpt-4o` at t
 The proxy features transparent, proxy-level auto-recovery. If a request to a free model returns a rate limit (429) or server error (5xx), the proxy automatically intercepts the failure, places the failing model in cooldown, and retries the exact same request using the next highest-ranked free model.
 
 **State Persistence**: Cooldowns are saved to `cooldowns.json` and persist across restarts.
++
++## Proxy-Magic (Resilient Tool-Use)
++
++Free models (like Llama 3.3 or Mixtral) often struggle with strict JSON-based tool calling, frequently choosing to "talk about" running a command instead of actually triggering the tool.
++
++Freeride solves this by implementing **Proxy-Magic**:
++1. **Markdown Extraction**: If a model returns a markdown bash block (```bash ... ```), the proxy automatically converts it into a `run_terminal_command` tool call.
++2. **Conversational Extraction**: The proxy uses aggressive regex to catch conversational intent, such as:
++   - "I will now run `gt hook`"
++   - "I'm going to run `bd list`"
++3. **Deduplication**: If a model both talks about and uses the tool, the proxy deduplicates the requests to prevent double-execution.
++
++This mechanism ensures that the **Gas Town** agent ecosystem remains fully autonomous even when running on zero-cost models.
 
 ## Supported Endpoints
 
