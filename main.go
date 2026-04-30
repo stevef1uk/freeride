@@ -729,7 +729,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				   strings.HasPrefix(candidate, "01-ai/")
 				   strings.HasPrefix(candidate, "deepseek/")
 
-		if isNvidia {
+		if strings.Contains(candidate, "claude-3-5-sonnet") {
+			targetURL = "https://api.anthropic.com/v1/messages"
+			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+			isAnthropic = true
+		} else if isNvidia {
 			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 			apiKey = os.Getenv("NVIDIA_API_KEY")
 		} else {
@@ -1538,6 +1542,19 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 		message, _ := choice["message"].(map[string]interface{})
 		content, _ = message["content"].(string)
 
+		// FALLBACK: Extract markdown bash blocks if no JSON tool_calls were returned
+		if content != "" && !hasToolCalls(message) {
+			extractedTools := extractMarkdownTools(content)
+			if len(extractedTools) > 0 {
+				log.Printf("[PROXY-MAGIC] Extracted %d tools from markdown text", len(extractedTools))
+				for _, et := range extractedTools {
+					anthropicContent = append(anthropicContent, et)
+				}
+				// Optionally strip the markdown from content to avoid double-execution
+				// but Claude Code is smart enough to handle it if the tool_use is present
+			}
+		}
+
 		if content != "" {
 			anthropicContent = append(anthropicContent, map[string]interface{}{
 				"type": "text",
@@ -1861,5 +1878,91 @@ func repairJSONArguments(args string) string {
 	}
 
 	return repaired
+}
+
+func hasToolCalls(message map[string]interface{}) bool {
+	tc, ok := message["tool_calls"].([]interface{})
+	return ok && len(tc) > 0
+}
+
+func extractMarkdownTools(content string) []map[string]interface{} {
+	var tools []map[string]interface{}
+
+	// Pattern 1: Bash code blocks
+	// ```bash
+	// gt prime
+	// ```
+	re := regexp.MustCompile("(?s)```(?:bash|sh|shell)\\n(.*?)\\n```")
+	matches := re.FindAllStringSubmatch(content, -1)
+	for _, m := range matches {
+		if len(m) == 2 {
+			command := strings.TrimSpace(m[1])
+			if command != "" {
+				tools = append(tools, map[string]interface{}{
+					"type": "tool_use",
+					"id":   "call_md_" + fmt.Sprintf("%d", time.Now().UnixNano()),
+					"name": "run_terminal_command",
+					"input": map[string]interface{}{
+						"command": command,
+					},
+				})
+			}
+		}
+	}
+
+	// Pattern 2: Backticked commands in sentences
+	// I will now run `gt hook`
+	reBacktick := regexp.MustCompile("`\\s*((?:gt|bd|ls|cat|mkdir|touch|rm|git|cd|bash|sh)\\s+.*?)`")
+	matchesBacktick := reBacktick.FindAllStringSubmatch(content, -1)
+	for _, m := range matchesBacktick {
+		if len(m) == 2 {
+			command := strings.TrimSpace(m[1])
+			if command != "" {
+				tools = append(tools, map[string]interface{}{
+					"type": "tool_use",
+					"id":   "call_bt_" + fmt.Sprintf("%d", time.Now().UnixNano()),
+					"name": "run_terminal_command",
+					"input": map[string]interface{}{
+						"command": command,
+					},
+				})
+			}
+		}
+	}
+
+	// Pattern 3: Direct "I will now run X" sentences
+	// We handle both quoted and unquoted versions
+	reRun := regexp.MustCompile("(?i)(?:I will now run|I am now going to run|I'll now run|I'm going to run)\\s+[`\"']?((?:gt|bd|ls|cat|mkdir|touch|rm|git|cd|bash|sh)\\s+[^`\"'\\.\\!\\n]+)[`\"']?")
+	matchesRun := reRun.FindAllStringSubmatch(content, -1)
+	for _, m := range matchesRun {
+		if len(m) == 2 {
+			command := strings.TrimSpace(m[1])
+			if command != "" {
+				tools = append(tools, map[string]interface{}{
+					"type": "tool_use",
+					"id":   "call_run_" + fmt.Sprintf("%d", time.Now().UnixNano()),
+					"name": "run_terminal_command",
+					"input": map[string]interface{}{
+						"command": command,
+					},
+				})
+			}
+		}
+	}
+
+	// Deduplicate commands
+	finalTools := []map[string]interface{}{}
+	seenCommands := make(map[string]bool)
+	for _, t := range tools {
+		input := t["input"].(map[string]interface{})
+		cmd := strings.TrimSpace(input["command"].(string))
+		if !seenCommands[cmd] {
+			input["command"] = cmd
+			finalTools = append(finalTools, t)
+			seenCommands[cmd] = true
+		}
+	}
+
+	return finalTools
 }
 

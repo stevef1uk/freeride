@@ -550,3 +550,50 @@ func TestModelFallbackChain(t *testing.T) {
 		t.Logf("Note: All requests failed - checking if OpenRouter has credits")
 	}
 }
+
+func TestMarkdownToolExtraction(t *testing.T) {
+	content := "I'll run the command now.\n\n```bash\ngt prime --hook\n```\n\nPlease wait."
+	tools := extractMarkdownTools(content)
+	
+	if len(tools) != 1 {
+		t.Fatalf("Expected 1 tool, got %d", len(tools))
+	}
+	
+	if tools[0]["name"] != "run_terminal_command" {
+		t.Errorf("Expected tool name run_terminal_command, got %v", tools[0]["name"])
+	}
+	
+	input := tools[0]["input"].(map[string]interface{})
+	if input["command"] != "gt prime --hook" {
+		t.Errorf("Expected command 'gt prime --hook', got '%v'", input["command"])
+	}
+}
+
+func TestConversationalToolExtraction(t *testing.T) {
+	content := "I will now run `gt hook` to check for work."
+	tools := extractMarkdownTools(content)
+	
+	for i, tool := range tools {
+		input := tool["input"].(map[string]interface{})
+		t.Logf("Tool %d: '%v'", i, input["command"])
+	}
+
+	if len(tools) != 1 {
+		t.Fatalf("Expected 1 tool, got %d", len(tools))
+	}
+	
+	input := tools[0]["input"].(map[string]interface{})
+	if input["command"] != "gt hook" {
+		t.Errorf("Expected command 'gt hook', got '%v'", input["command"])
+	}
+
+	content2 := "I am now going to run bd list."
+	tools2 := extractMarkdownTools(content2)
+	if len(tools2) != 1 {
+		t.Fatalf("Expected 1 tool for content2, got %d", len(tools2))
+	}
+	input2 := tools2[0]["input"].(map[string]interface{})
+	if input2["command"] != "bd list" {
+		t.Errorf("Expected command 'bd list', got '%v'", input2["command"])
+	}
+}
