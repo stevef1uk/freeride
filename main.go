@@ -707,10 +707,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	candidates = []string{
+		"mistralai/mixtral-8x22b-instruct-v0.1",
 		"meta/llama-3.3-70b-instruct",
 		"abacusai/dracarys-llama-3.1-70b-instruct",
 		"ai21labs/jamba-1.5-large-instruct",
-		"mistralai/mixtral-8x22b-instruct-v0.1",
 		"qwen/qwen3-next-80b-a3b-instruct",
 	}
 	for i, candidate := range candidates {
