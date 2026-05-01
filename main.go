@@ -74,6 +74,7 @@ var (
 	cooldownMu sync.RWMutex
 
 	debugMode bool
+	traceMode bool
 	allowPaid bool
 	toolRegex = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
 	paramRegex = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
@@ -1524,6 +1525,7 @@ func main() {
 	}
 
 	flag.BoolVar(&debugMode, "debug", false, "Enable debug logging")
+	flag.BoolVar(&traceMode, "trace", false, "Enable extremely verbose trace logging")
 	flag.BoolVar(&allowPaid, "allow-paid", false, "Allow using paid models for complex requests or as fallback")
 	flag.Parse()
 
@@ -1736,8 +1738,8 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 		line := scanner.Text()
 		if line == "" || !strings.HasPrefix(line, "data: ") {
 			// Log non-data lines for debugging
-			if line != "" {
-				log.Printf("[DEBUG] Raw SSE line: %s", line)
+			if line != "" && traceMode {
+				log.Printf("[TRACE] Raw SSE line: %s", line)
 			}
 			continue
 		}
@@ -1745,8 +1747,8 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 		if data == "[DONE]" {
 			break
 		}
-		if debugMode {
-			log.Printf("[DEBUG] SSE Data: %s", data)
+		if traceMode {
+			log.Printf("[TRACE] SSE Data: %s", data)
 		}
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
