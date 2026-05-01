@@ -709,8 +709,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	candidates = []string{
 		"meta/llama-3.3-70b-instruct",
 		"abacusai/dracarys-llama-3.1-70b-instruct",
-		"qwen/qwen3-next-80b-a3b-instruct",
-		"ai21labs/jamba-1.5-large-instruct",
+		"nvidia/llama-3.1-70b-instruct",
 	}
 	for i, candidate := range candidates {
 		// Determine which API to use based on model prefix
@@ -1736,11 +1735,18 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" || !strings.HasPrefix(line, "data: ") {
+			// Log non-data lines for debugging
+			if line != "" {
+				log.Printf("[DEBUG] Raw SSE line: %s", line)
+			}
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
 			break
+		}
+		if debugMode {
+			log.Printf("[DEBUG] SSE Data: %s", data)
 		}
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
@@ -1757,15 +1763,11 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 							fullText += content
 							
 							// Check for XML tool calls in the buffered text
-							// We only emit text that isn't part of an XML tool call we're about to translate
 							matches := toolRegex.FindAllStringSubmatch(fullText, -1)
 							if len(matches) > 0 {
 								for _, match := range matches {
 									tName := match[1]
 									tParams := match[2]
-									
-									// If we find a match, we translate it to a tool_use event
-									// and ensure we don't emit the XML itself as text
 									
 									// Mapping common tool names
 									toolName := tName
@@ -1804,9 +1806,21 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 								}
 							}
 							
-							// Emit any new non-XML text
-							newText := strings.TrimPrefix(fullText, emittedText)
-							if newText != "" && !strings.Contains(newText, "<invoke") && !strings.Contains(newText, "<parameter") {
+							// Safety: If fullText contains an UNFINISHED <invoke tag, we only emit text UP TO the start of that tag.
+							// This prevents partial XML from leaking into the text stream while still delivering preceding text.
+							emitLimit := len(fullText)
+							if idx := strings.LastIndex(fullText, "<invoke"); idx != -1 {
+								emitLimit = idx
+							} else if idx := strings.LastIndex(fullText, "<parameter"); idx != -1 {
+								emitLimit = idx
+							}
+
+							newText := ""
+							if emitLimit > len(emittedText) {
+								newText = fullText[len(emittedText):emitLimit]
+							}
+
+							if newText != "" {
 								sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
 									"type":  "content_block_delta",
 									"index": 0,
