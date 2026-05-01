@@ -707,11 +707,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	candidates = []string{
-		"mistralai/mixtral-8x22b-instruct-v0.1",
 		"meta/llama-3.3-70b-instruct",
 		"abacusai/dracarys-llama-3.1-70b-instruct",
-		"ai21labs/jamba-1.5-large-instruct",
 		"qwen/qwen3-next-80b-a3b-instruct",
+		"ai21labs/jamba-1.5-large-instruct",
 	}
 	for i, candidate := range candidates {
 		// Determine which API to use based on model prefix
@@ -1023,6 +1022,7 @@ func copyResponse(w http.ResponseWriter, resp *http.Response) {
 	resp.Body.Close()
 
 	translated := translateResponse(bodyBytes)
+	log.Printf("[DEBUG] LLM Response: %s", string(translated))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(translated)))
 	w.WriteHeader(resp.StatusCode)
 	w.Write(translated)
@@ -1423,6 +1423,7 @@ func sanitizeBody(body map[string]interface{}) {
 				   strings.HasPrefix(model, "01-ai/") ||
 				   strings.HasPrefix(model, "deepseek/")
 
+	log.Printf("[DEBUG] sanitizeBody: model=%q isNvidia=%v tool_choice=%v", model, isNvidiaModel, body["tool_choice"])
 	if isNvidiaModel {
 		if tc, ok := body["tool_choice"].(string); ok && tc == "auto" {
 			delete(body, "tool_choice")
