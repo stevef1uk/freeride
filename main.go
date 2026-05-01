@@ -1070,6 +1070,8 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 		},
 	})
 
+	var fullContent string
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1082,26 +1084,49 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 			break
 		}
 
-// if debugMode {
-// 	log.Printf("[RAW-SSE] %s", data)
-// }
-
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
 			if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
-						content, _ := delta["content"].(string)
-						if content != "" {
-// if debugMode {
-// 	log.Printf("[SPY-CHUNK] %s", content)
-// }
-							// 3. response.output_text.delta
-							sendEvent("response.output_text.delta", map[string]interface{}{
-								"type":    "response.output_text.delta",
-								"item_id": itemID,
-								"delta":   content,
-							})
+						// Handle Text Content
+						if content, ok := delta["content"].(string); ok && content != "" {
+							fullContent += content
+							
+							// Check if we have a complete XML tool call in the buffered content
+							// This is a simplified stream-aware check
+							matches := toolRegex.FindAllStringSubmatch(fullContent, -1)
+							if len(matches) > 0 {
+								// We found XML tools! We should convert them to tool_calls if possible,
+								// or just let them through and hope the client handles them.
+								// For now, we'll log it and continue.
+								log.Printf("[TRANS] Detected XML tool call in stream: %s", matches[0][1])
+							}
+
+							outChunk := map[string]interface{}{
+								"choices": []interface{}{
+									map[string]interface{}{
+										"delta": map[string]interface{}{
+											"content": content,
+										},
+									},
+								},
+							}
+							outData, _ := json.Marshal(outChunk)
+							fmt.Fprintf(w, "data: %s\n\n", string(outData))
+							if ok {
+								flusher.Flush()
+							}
+						}
+						
+						// Handle Native Tool Calls
+						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+							// Passthrough
+							outData, _ := json.Marshal(chunk)
+							fmt.Fprintf(w, "data: %s\n\n", string(outData))
+							if ok {
+								flusher.Flush()
+							}
 						}
 					}
 				}
@@ -1704,6 +1729,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	toolCallArgs := make(map[int]string)
 	toolCallNames := make(map[int]string)
 	toolCallIDs := make(map[int]string)
+	var fullText string
+	var emittedText string
+	
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1711,9 +1739,6 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
-// if debugMode {
-// 	log.Printf("[DEBUG] Raw SSE data: %s", data)
-// }
 		if data == "[DONE]" {
 			break
 		}
@@ -1723,23 +1748,75 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if finish, ok := choice["finish_reason"].(string); ok && finish == "length" && !hasContent {
 						log.Printf("[WARN] Model hit token limit without sending content (reasoning loop detected).")
-						// We can't really "return an error" easily here because we've already started the stream
-						// but we can at least log it.
 					}
-
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						// 1. Text Content
 						content, _ := delta["content"].(string)
 						if content != "" {
 							hasContent = true
-							sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
-								"type":  "content_block_delta",
-								"index": 0,
-								"delta": map[string]interface{}{
-									"type": "text_delta",
-									"text": content,
-								},
-							})
+							fullText += content
+							
+							// Check for XML tool calls in the buffered text
+							// We only emit text that isn't part of an XML tool call we're about to translate
+							matches := toolRegex.FindAllStringSubmatch(fullText, -1)
+							if len(matches) > 0 {
+								for _, match := range matches {
+									tName := match[1]
+									tParams := match[2]
+									
+									// If we find a match, we translate it to a tool_use event
+									// and ensure we don't emit the XML itself as text
+									
+									// Mapping common tool names
+									toolName := tName
+									if toolName == "shell" {
+										toolName = "run_terminal_command"
+									}
+									
+									// Parse params
+									args := make(map[string]interface{})
+									paramMatches := paramRegex.FindAllStringSubmatch(tParams, -1)
+									for _, pm := range paramMatches {
+										args[pm[1]] = pm[2]
+									}
+									
+									log.Printf("[TRANS] Translating XML tool call in stream: %s", toolName)
+									
+									// Emit tool_use
+									tID := fmt.Sprintf("call_%d_%s", time.Now().Unix(), toolName)
+									sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
+										"type": "content_block_start",
+										"index": 1,
+										"content_block": map[string]interface{}{
+											"type": "tool_use",
+											"id": tID,
+											"name": toolName,
+											"input": args,
+										},
+									})
+									sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
+										"type": "content_block_stop",
+										"index": 1,
+									})
+									
+									// Remove the XML from fullText so it doesn't get emitted as text delta
+									fullText = strings.Replace(fullText, match[0], "", 1)
+								}
+							}
+							
+							// Emit any new non-XML text
+							newText := strings.TrimPrefix(fullText, emittedText)
+							if newText != "" && !strings.Contains(newText, "<invoke") && !strings.Contains(newText, "<parameter") {
+								sendAnthropicEvent(w, flusher, "content_block_delta", map[string]interface{}{
+									"type":  "content_block_delta",
+									"index": 0,
+									"delta": map[string]interface{}{
+										"type": "text_delta",
+										"text": newText,
+									},
+								})
+								emittedText += newText
+							}
 						}
 						// 2. Tool Calls
 						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
