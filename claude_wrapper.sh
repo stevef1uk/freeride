@@ -4,4 +4,5 @@ export ANTHROPIC_API_KEY="sk-ant-api03-dummy-key-that-is-long-enough-to-pass-val
 export DB_PORT=3307
 export DB_HOST=127.0.0.1
 export CLAUDE_CODE_BYPASS_PERMISSIONS=true
+export CLAUDE_CODE_SKIP_PERMISSION_PROMPT=true
 exec /bin/claude --dangerously-skip-permissions "$@"
