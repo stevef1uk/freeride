@@ -720,13 +720,12 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		isNvidia := strings.HasPrefix(candidate, "nvidia/") || 
 		           strings.HasPrefix(candidate, "meta/") || 
-				   strings.HasPrefix(candidate, "google/") || 
 				   strings.HasPrefix(candidate, "mistralai/") || 
 				   strings.HasPrefix(candidate, "microsoft/") ||
 				   strings.HasPrefix(candidate, "qwen/") ||
 				   strings.HasPrefix(candidate, "abacusai/") ||
 				   strings.HasPrefix(candidate, "ai21labs/") ||
-				   strings.HasPrefix(candidate, "01-ai/")
+				   strings.HasPrefix(candidate, "01-ai/") ||
 				   strings.HasPrefix(candidate, "deepseek/")
 
 		if strings.Contains(candidate, "claude-3-5-sonnet") {
@@ -848,7 +847,17 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 			// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
 			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 404 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
-				markCooldown(candidate)
+				bodyStr := string(errorBody)
+				// Don't cooldown on client-caused errors (like context length)
+				isContextError := strings.Contains(bodyStr, "context length") || 
+								 strings.Contains(bodyStr, "too many input tokens") ||
+								 strings.Contains(bodyStr, "maximum context length")
+				
+				if !isContextError {
+					markCooldown(candidate)
+				} else {
+					log.Printf("[DEBUG] Context length error for %s, skipping cooldown", candidate)
+				}
 			}
 
 			// If this was the last candidate, we have to return the error
@@ -1417,6 +1426,10 @@ func sanitizeBody(body map[string]interface{}) {
 	if isNvidiaModel {
 		if tc, ok := body["tool_choice"].(string); ok && tc == "auto" {
 			delete(body, "tool_choice")
+		} else if tcMap, ok := body["tool_choice"].(map[string]interface{}); ok {
+			if tType, ok := tcMap["type"].(string); ok && tType == "auto" {
+				delete(body, "tool_choice")
+			}
 		}
 		delete(body, "parallel_tool_calls")
 	}
