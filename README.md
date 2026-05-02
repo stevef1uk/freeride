@@ -85,12 +85,43 @@ Claude Code works perfectly with Freeride by translating Anthropic's Messages AP
    claude --dangerously-skip-permissions
    ```
 
-### 2. Antigravity / OpenCode
+### 2. OpenCode
 **Status: Fully Supported**
 Point your compatibility variables to the local proxy:
 ```bash
 export OPENAI_BASE_URL="http://localhost:11434/v1"
 export OPENAI_API_KEY="dummy_key"
+```
+
+## Gas Town Integration
+
+**Freeride works as the LLM backend for Gas Town agents** (Claude, OpenCode, Codex, etc.). The proxy runs on `:11434` and forwards traffic to free models from OpenRouter and NVIDIA NIM.
+
+### Environment Variables
+
+Before running any `gt` commands that launch agents, **set these in your parent shell** so Gastown passes them through to the agent processes:
+
+```bash
+export OPENAI_BASE_URL="http://localhost:11434/v1"
+export OPENAI_API_BASE="http://localhost:11434/v1"
+export ANTHROPIC_BASE_URL="http://localhost:11434/v1"
+export OPENAI_API_KEY="dummy"
+export ANTHROPIC_API_KEY="sk-ant-api03-dummy-key-that-is-long-enough-to-pass-validation-abcdefghijklmnopqrstuvwxyz012345"
+```
+
+You can persist these in your shell profile (`.bashrc`, `.zshrc`) or source them from a `.env` file before working with Gas Town.
+
+### Wrapper Scripts
+
+Two convenience wrappers are included for direct agent usage outside of Gas Town:
+
+- **`claude_wrapper.sh`** — Launches Claude Code pointing at Freeride
+- **`opencode_wrapper.sh`** — Launches OpenCode pointing at Freeride
+
+Usage:
+```bash
+./claude_wrapper.sh
+./opencode_wrapper.sh run "your prompt here"
 ```
 
 ## Power Model Spoofing (Tool Support)

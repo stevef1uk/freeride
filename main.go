@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type openRouterModel struct {
@@ -31,6 +33,61 @@ type openRouterModel struct {
 	SupportedParameters []string `json:"supported_parameters"`
 	Created             int64    `json:"created"`
 }
+
+type modelsConfig struct {
+	ReliableFree   []string `yaml:"reliableFree"`
+	NvidiaReliable []string `yaml:"nvidiaReliable"`
+	CuratedPaid    []string `yaml:"curatedPaid"`
+	ExcludeModels  []string `yaml:"excludeModels"`
+}
+
+var (
+	globalModelsConfig modelsConfig
+	configMutex        sync.RWMutex
+)
+
+func loadModelsConfig() {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	data, err := ioutil.ReadFile("models.yaml")
+	if err != nil {
+		log.Printf("[WARN] Failed to read models.yaml: %v. Using defaults.", err)
+		// Set defaults if file missing
+		globalModelsConfig = modelsConfig{
+			ReliableFree: []string{
+				"google/gemini-2.0-flash-exp:free",
+				"meta-llama/llama-3.3-70b-instruct:free",
+				"deepseek/deepseek-v3:free",
+			},
+			NvidiaReliable: []string{
+				"meta/llama-3.3-70b-instruct",
+				"nvidia/llama-3.1-70b-instruct",
+			},
+		}
+		return
+	}
+
+	if err := yaml.Unmarshal(data, &globalModelsConfig); err != nil {
+		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
+		return
+	}
+	log.Printf("[INFO] Loaded %d reliable free, %d NVIDIA, and %d curated paid models from config", 
+		len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid))
+}
+
+func isExcluded(model string) bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	for _, m := range globalModelsConfig.ExcludeModels {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
+
 
 type nvidiaModel struct {
 	ID         string      `json:"id"`
@@ -547,8 +604,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Build candidates list from BOTH OpenRouter AND NVIDIA free models
 	var candidates []string
-	candidates = append(candidates, "meta/llama-3.3-70b-instruct")
-	log.Printf("[DEBUG] Final Candidates: %v", candidates)
+	configMutex.RLock()
+	conf := globalModelsConfig
+	configMutex.RUnlock()
+
 	isComplexRequest := isComplex(bodyMap)
 
 	// Tier 1: Original requested model (if Free)
@@ -569,7 +628,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if isOriginalFree {
+		if isOriginalFree && !isExcluded(originalModel) {
 			candidates = append(candidates, originalModel)
 		}
 		}
@@ -580,18 +639,23 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if m.ID == originalModel {
 			continue
 		}
-		if !isCooldown(m.ID) && m.SupportsTools {
+		if !isCooldown(m.ID) && m.SupportsTools && !isExcluded(m.ID) {
 			candidates = append(candidates, m.ID)
 		}
 	}
 
-	// Tier 3: Specific Reliable Free OpenRouter models
-	reliableFree := []string{
-		"meta-llama/llama-3.3-70b-instruct:free",
-		"google/gemma-4-26b-a4b-it:free",
-		"qwen/qwen3-next-80b-a3b-instruct:free",
+	// Tier 2.5: Specifically reliable NVIDIA models from config
+	if isComplexRequest {
+		for _, nid := range conf.NvidiaReliable {
+			if !isCooldown(nid) && !isExcluded(nid) {
+				candidates = append(candidates, nid)
+			}
+		}
 	}
-	for _, fid := range reliableFree {
+
+
+	// Tier 3: Specific Reliable Free OpenRouter models from config
+	for _, fid := range conf.ReliableFree {
 		if fid == originalModel {
 			continue
 		}
@@ -617,6 +681,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+
 	// Tier 3.5: Other Free OpenRouter models
 	for _, m := range models {
 		already := false
@@ -634,7 +699,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		isFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
-		if isFree && !isCooldown(m.ID) {
+		if isFree && !isCooldown(m.ID) && !isExcluded(m.ID) {
 			candidates = append(candidates, m.ID)
 		}
 	}
@@ -642,12 +707,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Tier 4: Original requested model (if Paid & Curated & Complex)
 	if originalModel != "" && !isOriginalFree && !isCooldown(originalModel) && allowPaid && isComplexRequest {
 		isCurated := false
-		curatedPaid := []string{
-			"openai/gpt-4o-mini",
-			"google/gemini-2.0-flash-001",
-			"anthropic/claude-3.5-sonnet",
-		}
-		for _, cp := range curatedPaid {
+		for _, cp := range conf.CuratedPaid {
 			if cp == originalModel {
 				isCurated = true
 				break
@@ -707,11 +767,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
 		}
 	}
-	candidates = []string{
-		"meta/llama-3.3-70b-instruct",
-		"abacusai/dracarys-llama-3.1-70b-instruct",
-		"nvidia/llama-3.1-70b-instruct",
-	}
+
+	log.Printf("[DEBUG] Final Candidates: %v", candidates)
+
 	for i, candidate := range candidates {
 		// Determine which API to use based on model prefix
 		var targetURL string
@@ -886,12 +944,16 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					translateAnthropicResponse(w, resp)
 				}
 			} else if r.URL.Path == "/v1/responses" {
-				translateSSE(w, resp)
+				if isStream {
+					translateResponsesSSE(w, resp, originalModel)
+				} else {
+					translateResponsesResponse(w, resp, originalModel)
+				}
 			} else {
-				copyResponse(w, resp)
+				copyResponse(w, resp, originalModel)
 			}
 		} else {
-			copyResponse(w, resp)
+			copyResponse(w, resp, originalModel)
 		}
 		return
 	}
@@ -903,10 +965,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"error": {"message": "No models available in the Freeride proxy. Please check your API keys.", "type": "unavailable"}}`))
 }
 
-func translateResponse(body []byte) []byte {
+func translateResponse(body []byte, overrideModel string) []byte {
 	var resp map[string]interface{}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return body
+	}
+
+	if overrideModel != "" {
+		resp["model"] = overrideModel
 	}
 
 	choices, ok := resp["choices"].([]interface{})
@@ -934,11 +1000,9 @@ func translateResponse(body []byte) []byte {
 	}
 
 	matches := toolRegex.FindAllStringSubmatch(content, -1)
-	if len(matches) == 0 {
-		return body
-	}
-
 	var toolCalls []map[string]interface{}
+	
+	// Pattern 1: XML tags (legacy/specific models)
 	for _, match := range matches {
 		name := match[1]
 		paramsRaw := match[2]
@@ -970,6 +1034,40 @@ func translateResponse(body []byte) []byte {
 		})
 	}
 
+	// Pattern 2: Markdown blocks and conversational mentions
+	extracted := extractMarkdownTools(content)
+	for _, ext := range extracted {
+		name, _ := ext["name"].(string)
+		input, _ := ext["input"].(map[string]interface{})
+		argsJSON, _ := json.Marshal(input)
+
+		// Check for duplicates from XML pattern
+		duplicate := false
+		for _, existing := range toolCalls {
+			if existingFn, ok := existing["function"].(map[string]interface{}); ok {
+				if existingFn["name"] == name && existingFn["arguments"] == string(argsJSON) {
+					duplicate = true
+					break
+				}
+			}
+		}
+
+		if !duplicate {
+			toolCalls = append(toolCalls, map[string]interface{}{
+				"id":   fmt.Sprintf("call_ext_%d", time.Now().UnixNano()),
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":      name,
+					"arguments": string(argsJSON),
+				},
+			})
+		}
+	}
+
+	if len(toolCalls) == 0 {
+		return body
+	}
+
 	if len(toolCalls) > 0 {
 		message["tool_calls"] = toolCalls
 		// Strip the XML from content so the agent only sees the tool call
@@ -986,7 +1084,7 @@ func translateResponse(body []byte) []byte {
 	return newBody
 }
 
-func copyResponse(w http.ResponseWriter, resp *http.Response) {
+func copyResponse(w http.ResponseWriter, resp *http.Response, overrideModel string) {
 	if debugMode {
 		log.Printf("[DEBUG] Response Headers: %v", resp.Header)
 	}
@@ -1021,14 +1119,15 @@ func copyResponse(w http.ResponseWriter, resp *http.Response) {
 	}
 	resp.Body.Close()
 
-	translated := translateResponse(bodyBytes)
+	translated := translateResponse(bodyBytes, overrideModel)
 	log.Printf("[DEBUG] LLM Response: %s", string(translated))
+
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(translated)))
 	w.WriteHeader(resp.StatusCode)
 	w.Write(translated)
 }
 
-func translateSSE(w http.ResponseWriter, resp *http.Response) {
+func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requestedModel string) {
 	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1039,7 +1138,10 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 
 	respID := "resp_" + fmt.Sprintf("%d", time.Now().Unix())
 	itemID := "item_" + fmt.Sprintf("%d", time.Now().Unix())
-	modelName := "gpt-4o" // Placeholder that OpenCode accepts
+	modelName := requestedModel
+	if modelName == "" {
+		modelName = "gpt-4o"
+	}
 
 	// Utility to send a named event
 	sendEvent := func(evType string, data interface{}) {
@@ -1067,10 +1169,14 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 		"item": map[string]interface{}{
 			"type": "message",
 			"id":   itemID,
+			"role": "assistant",
+			"status": "in_progress",
 		},
 	})
 
 	var fullContent string
+	var hasToolCalls bool
+	var toolCalls []interface{}
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -1092,40 +1198,41 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 						// Handle Text Content
 						if content, ok := delta["content"].(string); ok && content != "" {
 							fullContent += content
-							
-							// Check if we have a complete XML tool call in the buffered content
-							// This is a simplified stream-aware check
-							matches := toolRegex.FindAllStringSubmatch(fullContent, -1)
-							if len(matches) > 0 {
-								// We found XML tools! We should convert them to tool_calls if possible,
-								// or just let them through and hope the client handles them.
-								// For now, we'll log it and continue.
-								log.Printf("[TRANS] Detected XML tool call in stream: %s", matches[0][1])
-							}
-
-							outChunk := map[string]interface{}{
-								"choices": []interface{}{
-									map[string]interface{}{
-										"delta": map[string]interface{}{
-											"content": content,
-										},
-									},
-								},
-							}
-							outData, _ := json.Marshal(outChunk)
-							fmt.Fprintf(w, "data: %s\n\n", string(outData))
-							if ok {
-								flusher.Flush()
-							}
+							sendEvent("response.output_text.delta", map[string]interface{}{
+								"type":          "response.output_text.delta",
+								"response_id":   respID,
+								"output_index":  0,
+								"item_id":       itemID,
+								"content_index": 0,
+								"delta":         content,
+							})
 						}
-						
-						// Handle Native Tool Calls
-						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
-							// Passthrough
-							outData, _ := json.Marshal(chunk)
-							fmt.Fprintf(w, "data: %s\n\n", string(outData))
-							if ok {
-								flusher.Flush()
+
+						// Handle Tool Calls - accumulate them
+						if tc, ok := delta["tool_calls"].([]interface{}); ok && len(tc) > 0 {
+							hasToolCalls = true
+							toolCalls = append(toolCalls, tc...)
+							for _, t := range tc {
+								if tMap, ok := t.(map[string]interface{}); ok {
+									funcMap, _ := tMap["function"].(map[string]interface{})
+									name := ""
+									if funcMap != nil {
+										name, _ = funcMap["name"].(string)
+									}
+									tID, _ := tMap["id"].(string)
+									if tID == "" {
+										tID = fmt.Sprintf("call_%d", time.Now().UnixNano())
+									}
+									sendEvent("response.function_call_arguments.delta", map[string]interface{}{
+										"type":           "response.function_call_arguments.delta",
+										"response_id":    respID,
+										"output_index":   0,
+										"item_id":        itemID,
+										"call_id":        tID,
+										"name":           name,
+										"delta":          "", // Arguments come in later chunks usually
+									})
+								}
 							}
 						}
 					}
@@ -1135,19 +1242,50 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 	}
 
 	// 4. response.output_item.done
-	sendEvent("response.output_item.done", map[string]interface{}{
+	itemDone := map[string]interface{}{
 		"type":         "response.output_item.done",
 		"output_index": 0,
 		"item": map[string]interface{}{
 			"type": "message",
 			"id":   itemID,
+			"role": "assistant",
+			"status": "completed",
 		},
-	})
+	}
+	if fullContent != "" {
+		itemDone["item"].(map[string]interface{})["content"] = []interface{}{
+			map[string]interface{}{
+				"type": "output_text",
+				"text": fullContent,
+			},
+		}
+	}
+	if hasToolCalls {
+		itemDone["item"].(map[string]interface{})["content"] = []interface{}{
+			map[string]interface{}{
+				"type":      "tool_use",
+				"tool_use":  toolCalls,
+			},
+		}
+	}
+	sendEvent("response.output_item.done", itemDone)
 
 	// 5. response.completed
 	sendEvent("response.completed", map[string]interface{}{
 		"type": "response.completed",
 		"response": map[string]interface{}{
+			"id":         respID,
+			"status":     "completed",
+			"model":      modelName,
+			"created_at": time.Now().Unix(),
+			"output": []interface{}{
+				map[string]interface{}{
+					"type":    "message",
+					"id":      itemID,
+					"role":    "assistant",
+					"content": fullContent,
+				},
+			},
 			"usage": map[string]interface{}{
 				"input_tokens":  0,
 				"output_tokens": 0,
@@ -1156,6 +1294,94 @@ func translateSSE(w http.ResponseWriter, resp *http.Response) {
 	})
 
 	resp.Body.Close()
+}
+
+func translateResponsesResponse(w http.ResponseWriter, resp *http.Response, overrideModel string) {
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read upstream response", http.StatusInternalServerError)
+		return
+	}
+	resp.Body.Close()
+
+	var chatResp map[string]interface{}
+	if err := json.Unmarshal(body, &chatResp); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+		return
+	}
+
+	respID := "resp_" + fmt.Sprintf("%d", time.Now().Unix())
+	itemID := "item_" + fmt.Sprintf("%d", time.Now().Unix())
+	modelName := overrideModel
+	if modelName == "" {
+		modelName = "gpt-4o"
+	}
+	if m, ok := chatResp["model"].(string); ok && m != "" {
+		modelName = m
+	}
+
+	var content string
+	var toolCalls []interface{}
+	if choices, ok := chatResp["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				if c, ok := msg["content"].(string); ok {
+					content = c
+				}
+				if tc, ok := msg["tool_calls"].([]interface{}); ok {
+					toolCalls = tc
+				}
+			}
+		}
+	}
+
+	var outputItems []interface{}
+	if content != "" {
+		outputItems = append(outputItems, map[string]interface{}{
+			"type": "message",
+			"id":   itemID,
+			"role": "assistant",
+			"content": []interface{}{
+				map[string]interface{}{
+					"type": "output_text",
+					"text": content,
+				},
+			},
+		})
+	}
+	if len(toolCalls) > 0 {
+		outputItems = append(outputItems, map[string]interface{}{
+			"type": "message",
+			"id":   itemID,
+			"role": "assistant",
+			"content": []interface{}{
+				map[string]interface{}{
+					"type":     "tool_use",
+					"tool_use": toolCalls,
+				},
+			},
+		})
+	}
+
+	responsesResp := map[string]interface{}{
+		"id":         respID,
+		"object":     "response",
+		"created_at": time.Now().Unix(),
+		"model":      modelName,
+		"status":     "completed",
+		"output":     outputItems,
+		"usage": map[string]interface{}{
+			"input_tokens":  0,
+			"output_tokens": 0,
+		},
+	}
+
+	outBody, _ := json.Marshal(responsesResp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(outBody)
 }
 
 func proxyModels(w http.ResponseWriter, r *http.Request) {
@@ -1335,6 +1561,10 @@ func sanitizeBody(body map[string]interface{}) {
 							mMap["tool_calls"] = toolCalls
 						}
 					}
+				}
+				// Convert 'developer' role to 'system'
+				if role, ok := mMap["role"].(string); ok && role == "developer" {
+					mMap["role"] = "system"
 				}
 				newMsgs = append(newMsgs, mMap)
 			}
@@ -1533,6 +1763,8 @@ func main() {
 	cleanStaleCooldowns()
 	loadCooldowns()
 
+
+	loadModelsConfig()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if debugMode {

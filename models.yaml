@@ -1,0 +1,22 @@
+# Freeride Model Configuration
+
+# Priority 1: Specifically requested reliable free models
+reliableFree:
+  - "google/gemini-2.0-flash-exp:free"
+  - "meta-llama/llama-3.3-70b-instruct:free"
+  - "deepseek/deepseek-v3:free"
+
+# Priority 2: Reliable NVIDIA models (will be tried if tool support is needed)
+nvidiaReliable:
+  - "meta/llama-3.3-70b-instruct"
+  - "nvidia/llama-3.1-70b-instruct"
+
+# Models that should be tried even if they are paid (if allow-paid is true)
+curatedPaid:
+  - "openai/gpt-4o-mini"
+  - "google/gemini-2.0-flash-001"
+  - "anthropic/claude-3.5-sonnet"
+
+# Models to exclude even if they are free
+excludeModels:
+  - "google/gemma-4-26b-a4b-it:free" # Currently broken 401
