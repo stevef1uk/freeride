@@ -1177,6 +1177,7 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 	var fullContent string
 	var hasToolCalls bool
 	var toolCalls []interface{}
+	var contentPartAdded bool
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -1197,6 +1198,19 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						// Handle Text Content
 						if content, ok := delta["content"].(string); ok && content != "" {
+							if !contentPartAdded {
+								contentPartAdded = true
+								sendEvent("response.content_part.added", map[string]interface{}{
+									"type":          "response.content_part.added",
+									"response_id":   respID,
+									"output_index":  0,
+									"item_id":       itemID,
+									"content_index": 0,
+									"part": map[string]interface{}{
+										"type": "output_text",
+									},
+								})
+							}
 							fullContent += content
 							sendEvent("response.output_text.delta", map[string]interface{}{
 								"type":          "response.output_text.delta",
@@ -1239,6 +1253,21 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 				}
 			}
 		}
+	}
+
+	// 3. response.content_part.done (if text was sent)
+	if contentPartAdded {
+		sendEvent("response.content_part.done", map[string]interface{}{
+			"type":          "response.content_part.done",
+			"response_id":   respID,
+			"output_index":  0,
+			"item_id":       itemID,
+			"content_index": 0,
+			"part": map[string]interface{}{
+				"type": "output_text",
+				"text": fullContent,
+			},
+		})
 	}
 
 	// 4. response.output_item.done
