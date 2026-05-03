@@ -2008,13 +2008,27 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 		})
 	}
 
+	stopReason := "end_turn"
+	hasTools := false
+	for _, c := range anthropicContent {
+		if cMap, ok := c.(map[string]interface{}); ok {
+			if cMap["type"] == "tool_use" {
+				hasTools = true
+				break
+			}
+		}
+	}
+	if hasTools {
+		stopReason = "tool_use"
+	}
+
 	anthropicResp := map[string]interface{}{
 		"id":      "msg_" + fmt.Sprintf("%d", time.Now().Unix()),
 		"type":    "message",
 		"role":    "assistant",
 		"model":   "claude-3-5-sonnet-20241022",
 		"content": anthropicContent,
-		"stop_reason":   "tool_use",
+		"stop_reason":   stopReason,
 		"stop_sequence": nil,
 		"usage": map[string]interface{}{
 			"input_tokens":                0,
