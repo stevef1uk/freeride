@@ -2010,12 +2010,10 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 
 	stopReason := "end_turn"
 	hasTools := false
-	for _, c := range anthropicContent {
-		if cMap, ok := c.(map[string]interface{}); ok {
-			if cMap["type"] == "tool_use" {
-				hasTools = true
-				break
-			}
+	for _, item := range anthropicContent {
+		if item["type"] == "tool_use" {
+			hasTools = true
+			break
 		}
 	}
 	if hasTools {
