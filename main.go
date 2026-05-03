@@ -2018,7 +2018,7 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 	}
 	if hasTools {
 		stopReason = "tool_use"
-		log.Printf("[DEBUG] stop_reason set to tool_use (hasTools=%v)", hasTools)
+		log.Printf("[DEBUG] stop_reason set to tool_use (hasTools=true)")
 	}
 
 	anthropicResp := map[string]interface{}{
@@ -2263,6 +2263,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	// Also check for markdown-extracted tools (in case JSON tool_calls missed them)
 	if !hasTools {
 		extractedTools := extractMarkdownTools(fullText)
+		if len(extractedTools) > 0 {
+			log.Printf("[DEBUG] Extracted %d markdown tools from streaming response", len(extractedTools))
+		}
 		for _, et := range extractedTools {
 			tID := fmt.Sprintf("call_ext_%d", time.Now().UnixNano())
 			sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
