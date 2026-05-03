@@ -2018,6 +2018,7 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 	}
 	if hasTools {
 		stopReason = "tool_use"
+		log.Printf("[DEBUG] stop_reason set to tool_use (hasTools=%v)", hasTools)
 	}
 
 	anthropicResp := map[string]interface{}{
