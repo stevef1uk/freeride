@@ -2400,7 +2400,7 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 						tools = append(tools, map[string]interface{}{
 							"type": "tool_use",
 							"id":   "call_ext_" + fmt.Sprintf("%d_%d", time.Now().UnixNano(), len(tools)),
-							"name": "run_terminal_command",
+							"name": "Bash",
 							"input": map[string]interface{}{
 								"command": command,
 							},
@@ -2422,7 +2422,7 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 				tools = append(tools, map[string]interface{}{
 					"type": "tool_use",
 					"id":   "call_bt_" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					"name": "run_terminal_command",
+					"name": "Bash",
 					"input": map[string]interface{}{
 						"command": command,
 					},
@@ -2442,7 +2442,7 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 				tools = append(tools, map[string]interface{}{
 					"type": "tool_use",
 					"id":   "call_run_" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					"name": "run_terminal_command",
+					"name": "Bash",
 					"input": map[string]interface{}{
 						"command": command,
 					},
