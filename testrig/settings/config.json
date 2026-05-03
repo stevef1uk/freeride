@@ -1,0 +1,13 @@
+{
+  "type": "rig-settings",
+  "version": 1,
+  "build": {
+    "enabled": true,
+    "script": "./build.sh",
+    "targets": ["all", "freeride", "gastown", "test", "clean"]
+  },
+  "agents": {
+    "default": "opencode",
+    "build_agent": "opencode"
+  }
+}

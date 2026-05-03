@@ -97,7 +97,9 @@ export OPENAI_API_KEY="dummy_key"
 
 **Freeride works as the LLM backend for Gas Town agents** (Claude, OpenCode, Codex, etc.). The proxy runs on `:11434` and forwards traffic to free models from OpenRouter and NVIDIA NIM.
 
-### Environment Variables
+### Configuration
+
+#### 1. Environment Variables
 
 Before running any `gt` commands that launch agents, **set these in your parent shell** so Gastown passes them through to the agent processes:
 
@@ -111,18 +113,136 @@ export ANTHROPIC_API_KEY="sk-ant-api03-dummy-key-that-is-long-enough-to-pass-val
 
 You can persist these in your shell profile (`.bashrc`, `.zshrc`) or source them from a `.env` file before working with Gas Town.
 
-### Wrapper Scripts
+#### 2. GasTown Agent Configuration
+
+Create or update `gt/settings/config.json` in your project root:
+
+```json
+{
+  "type": "town-settings",
+  "version": 1,
+  "default_agent": "opencode",
+  "crew_agents": {
+    "steve": "opencode"
+  },
+  "agents": {
+    "opencode": {
+      "command": "/home/stevef/dev/freeride/opencode_wrapper.sh",
+      "args": ["--model", "openai/gpt-4o"],
+      "env": {
+        "OPENAI_BASE_URL": "http://localhost:11434/v1",
+        "OPENAI_API_BASE": "http://localhost:11434/v1",
+        "ANTHROPIC_BASE_URL": "http://localhost:11434/v1",
+        "OPENAI_API_KEY": "dummy",
+        "OPENCODE_PERMISSION": "{\"*\":\"allow\"}"
+      },
+      "tmux": {
+        "process_names": ["opencode"]
+      }
+    }
+  }
+}
+```
+
+**Key settings:**
+- `default_agent`: Set to `"opencode"` to use OpenCode as the default
+- `command`: Path to the `opencode_wrapper.sh` script
+- `args`: Pass `--model openai/gpt-4o` to enable full tool support (the proxy maps this to a free model)
+- `env`: These variables override any global settings and ensure routing through Freeride
+
+#### 3. Wrapper Scripts
 
 Two convenience wrappers are included for direct agent usage outside of Gas Town:
 
 - **`claude_wrapper.sh`** — Launches Claude Code pointing at Freeride
-- **`opencode_wrapper.sh`** — Launches OpenCode pointing at Freeride
+- **`opencode_wrapper.sh`** — Launches OpenCode pointing at Freeride with auto-prompt submission
+
+The `opencode_wrapper.sh` script:
+- Automatically selects a random ephemeral port for the TUI server
+- Starts opencode in the background
+- Auto-submits prompts via the TUI server API so agents start working immediately
+- Waits for opencode to finish, keeping the tmux session alive
 
 Usage:
 ```bash
 ./claude_wrapper.sh
-./opencode_wrapper.sh run "your prompt here"
+./opencode_wrapper.sh --prompt "your prompt here"
 ```
+
+### Verification
+
+#### Check the proxy is running:
+```bash
+curl -s http://localhost:11434/v1/models | head -5
+```
+You should see a JSON list of available models.
+
+#### Check requests are routing through the proxy:
+```bash
+# Monitor the proxy log in real-time
+tail -f freeride_live.log | grep -E "Attempting|succeeded|ERROR"
+```
+
+#### Check the opencode process environment:
+```bash
+# Find opencode PID
+pgrep -f "opencode"
+
+# Check its environment variables
+cat /proc/<PID>/environ | tr '\0' '\n' | grep -E "BASE_URL|API_KEY"
+```
+
+You should see:
+```
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_API_KEY=dummy
+```
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|:---|:---|:---|
+| `User not found` (401) | Invalid OpenRouter key | Generate a new key at openrouter.ai/settings/keys |
+| `Insufficient credits` (402) | OpenRouter balance is $0 | Add credits at openrouter.ai/settings/credits |
+| `Rate limited` (429) | Free model overloaded | Wait 10s or use NVIDIA models only |
+| `No models available` | All models in cooldown | Check `cooldowns.json` and restart proxy |
+| `404 Not Found` | Model no longer exists | Update `models.yaml` to remove deprecated models |
+| Proxy not responding | Freeride not running | Run `./freeride --debug > freeride_live.log 2>&1 &` |
+
+### Model Configuration
+
+Edit `models.yaml` to control which models the proxy uses:
+
+```yaml
+# Freeride Model Configuration
+
+# Priority 1: Specifically requested reliable free models
+reliableFree:
+  - "google/gemini-2.0-flash-exp:free"
+  - "meta-llama/llama-3.3-70b-instruct:free"
+  - "deepseek/deepseek-v3:free"
+
+# Priority 2: Reliable NVIDIA models
+nvidiaReliable:
+  - "meta/llama-3.3-70b-instruct"
+  - "nvidia/llama-3.1-70b-instruct"
+
+# Models that should be tried even if they are paid (if --allow-paid is set)
+curatedPaid:
+  - "openai/gpt-4o-mini"
+  - "google/gemini-2.0-flash-001"
+  - "anthropic/claude-3.5-sonnet"
+
+# Models to exclude even if they are free
+excludeModels:
+  - "google/gemma-4-26b-a4b-it:free" # Currently broken 401
+```
+
+**Verified working models (NVIDIA):**
+- `meta/llama-3.3-70b-instruct` ✅
+- `meta/llama-3.2-11b-vision-instruct` ✅
+
+**Note:** The proxy auto-discovers models from both OpenRouter and NVIDIA, but the `models.yaml` config prioritizes the listed models.
 
 ## Power Model Spoofing (Tool Support)
 
