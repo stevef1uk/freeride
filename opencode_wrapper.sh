@@ -26,6 +26,19 @@ while [ $i -le $# ]; do
     i=$((i+1))
 done
 
+# Gas Town passes the prompt as a positional argument (PromptMode: "arg"),
+# but opencode requires --prompt flag. Detect if the last positional arg
+# looks like a Gas Town prompt and move it to --prompt.
+if [ -z "$prompt" ] && [ ${#args[@]} -gt 0 ]; then
+    last_idx=$((${#args[@]} - 1))
+    last_arg="${args[$last_idx]}"
+    # Gas Town prompts contain "[GAS TOWN]" or newlines
+    if [[ "$last_arg" == *"[GAS TOWN]"* ]] || [[ "$last_arg" == *$'\n'* ]]; then
+        prompt="$last_arg"
+        unset 'args[$last_idx]'
+    fi
+fi
+
 # If no port specified, pick a random ephemeral port
 if [ -z "$port" ]; then
     port=$((40000 + RANDOM % 10000))
@@ -39,22 +52,20 @@ if [ -n "$prompt" ]; then
     opencmd+=(--prompt "$prompt")
 fi
 
-# Start opencode in the background
-"${opencmd[@]}" &
-OPID=$!
-
-# If we have a prompt, auto-submit it once the TUI server is ready
+# If we have a prompt, auto-submit it once the TUI server is ready in the background
 if [ -n "$prompt" ]; then
-    # Wait up to 15 seconds for the server to come up
-    for _ in $(seq 1 30); do
-        if curl -s "http://localhost:$port/config" > /dev/null 2>&1; then
-            curl -s -X POST "http://localhost:$port/tui/submit-prompt" \
-                -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
-            break
-        fi
-        sleep 0.5
-    done
+    (
+        # Wait up to 15 seconds for the server to come up
+        for _ in $(seq 1 30); do
+            if curl -s "http://localhost:$port/config" > /dev/null 2>&1; then
+                curl -s -X POST "http://localhost:$port/tui/submit-prompt" \
+                    -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+                break
+            fi
+            sleep 0.5
+        done
+    ) &
 fi
 
-# Wait for opencode to finish (keeps the tmux session alive)
-wait $OPID
+# Use exec to replace the shell with opencode so tmux liveness checks work
+exec "${opencmd[@]}"
