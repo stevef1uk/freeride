@@ -2136,7 +2136,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 									// Mapping common tool names
 									toolName := tName
 									if toolName == "shell" {
-										toolName = "run_terminal_command"
+										toolName = "Bash"
 									}
 									
 									// Parse params
@@ -2259,6 +2259,36 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 		})
 	}
 
+	hasTools := maxIndex > 0 || len(toolCallArgs) > 0
+	// Also check for markdown-extracted tools (in case JSON tool_calls missed them)
+	if !hasTools {
+		extractedTools := extractMarkdownTools(fullText)
+		for _, et := range extractedTools {
+			tID := fmt.Sprintf("call_ext_%d", time.Now().UnixNano())
+			sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
+				"type": "content_block_start",
+				"index": maxIndex + 1,
+				"content_block": map[string]interface{}{
+					"type":  "tool_use",
+					"id":    tID,
+					"name":  et["name"],
+					"input": et["input"],
+				},
+			})
+			sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
+				"type":  "content_block_stop",
+				"index": maxIndex + 1,
+			})
+			maxIndex++
+			hasTools = true
+		}
+	}
+
+	stopReason := "end_turn"
+	if hasTools {
+		stopReason = "tool_use"
+	}
+
 	// 4. content_block_stop for ALL blocks
 	for i := 0; i <= maxIndex; i++ {
 		sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
@@ -2271,7 +2301,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	sendAnthropicEvent(w, flusher, "message_delta", map[string]interface{}{
 		"type": "message_delta",
 		"delta": map[string]interface{}{
-			"stop_reason":   "end_turn",
+			"stop_reason":   stopReason,
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
