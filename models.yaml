@@ -4,7 +4,7 @@
 reliableFree:
   - "openai/gpt-4o-mini"
   - "google/gemini-2.0-flash-001"
-  - "meta-llama/llama-3.3-70b-instruct"
+  - "meta-llama/llama-3.3-70b-instruct:free"
 
 # Priority 2: Reliable NVIDIA models (zero-cost, high performance)
 nvidiaReliable:
@@ -20,8 +20,21 @@ excludeModels:
   - "anthropic/claude-3.5-sonnet"         # 404 Not Found on OpenRouter
   - "meta-llama/llama-3.3-70b-instruct:free"  # 429 Rate Limited
 
+# Priority 3: Local IDE Models (Opt-in via --allow-ide)
+ideModels:
+  - id: "google-antigravity/gemini-3-flash"
+    cooldown: "2h30m"
+    endpoint: "http://localhost:50000"
+  - id: "google-antigravity/claude-3-5-sonnet"
+    cooldown: "72h"
+    endpoint: "http://localhost:50000"
+  - id: "opencode/openai/gpt-4o"
+    cooldown: "24h"
+    endpoint: "http://localhost:40000"
+
 # Notes:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)
 # - NVIDIA models are always free and don't require credits
 # - Free models on OpenRouter often hit rate limits (429)
 # - Run with --allow-paid flag to enable paid model fallbacks
+# - Run with --allow-ide flag to enable local IDE fallbacks when all else is exhausted

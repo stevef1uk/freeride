@@ -47,9 +47,24 @@ if [ -z "$prompt" ] && [ ${#args[@]} -gt 0 ]; then
     fi
 fi
 
-# If no port specified, pick a random ephemeral port
+# If no port specified, find an available ephemeral port
+# Avoid ports 3306-3308 (Dolt/MySQL) and check availability
 if [ -z "$port" ]; then
-    port=$((40000 + RANDOM % 10000))
+    for _ in $(seq 1 50); do
+        candidate=$((40000 + RANDOM % 10000))
+        # Skip known Dolt ports and check if port is free
+        if [ "$candidate" -ge 3306 ] && [ "$candidate" -le 3308 ]; then
+            continue
+        fi
+        if ! ss -tln 2>/dev/null | grep -q ":$candidate "; then
+            port=$candidate
+            break
+        fi
+    done
+    # Fallback if all checked ports were busy
+    if [ -z "$port" ]; then
+        port=$((40000 + RANDOM % 10000))
+    fi
 fi
 
 # Build the opencode command with the selected port
@@ -60,19 +75,32 @@ if [ -n "$prompt" ]; then
     opencmd+=(--prompt "$prompt")
 fi
 
-# If we have a prompt, auto-submit it once the TUI server is ready in the background
+# If we have a prompt, auto-submit it once the TUI server is ready.
+# We double-fork so the helper is orphaned and re-parented to init,
+# preventing zombies when this shell execs opencode.
 if [ -n "$prompt" ]; then
     (
-        # Wait up to 15 seconds for the server to come up
-        for _ in $(seq 1 30); do
-            if curl -s "http://localhost:$port/config" > /dev/null 2>&1; then
-                curl -s -X POST "http://localhost:$port/tui/submit-prompt" \
-                    -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
-                break
-            fi
-            sleep 0.5
-        done
-    ) &
+        (
+            # Wait up to 15 seconds for the server to come up
+            for _ in $(seq 1 30); do
+                if curl -s "http://localhost:$port/config" > /dev/null 2>&1; then
+                    # 1. Try the API first (cleanest)
+                    curl -s -X POST "http://localhost:$port/tui/submit-prompt" \
+                        -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+
+                    # 2. Force a UI "nudge" via tmux if we are in a session
+                    # We send Escape to clear any startup "New Model" modals, then Enter to submit
+                    if [ -n "$TMUX_PANE" ]; then
+                        sleep 1 # Give the UI a moment to render after the API check
+                        tmux send-keys -t "$TMUX_PANE" Escape Escape Enter > /dev/null 2>&1
+                    fi
+                    break
+                fi
+                sleep 0.5
+            done
+        ) &
+        exit 0
+    ) > /dev/null 2>&1 &
 fi
 
 # Use exec to replace the shell with opencode so tmux liveness checks work

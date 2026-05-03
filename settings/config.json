@@ -5,7 +5,10 @@
   "agents": {
     "opencode": {
       "command": "/home/stevef/dev/freeride/opencode_wrapper.sh",
-      "args": ["--model", "openai/gpt-4o"],
+      "args": [
+        "--model",
+        "openai/gpt-4o"
+      ],
       "env": {
         "OPENAI_BASE_URL": "http://localhost:11434/v1",
         "OPENAI_API_BASE": "http://localhost:11434/v1",
@@ -14,7 +17,9 @@
         "OPENCODE_PERMISSION": "{\"*\":\"allow\"}"
       },
       "tmux": {
-        "process_names": ["opencode"]
+        "process_names": [
+          "opencode"
+        ]
       }
     }
   }

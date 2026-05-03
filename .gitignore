@@ -10,6 +10,7 @@ backup/
 fin/
 gt/
 dolt-data/
+.dolt-data/
 .runtime/
 .events.jsonl*
 .dog.json
@@ -17,6 +18,13 @@ dolt-data/
 .boot-status.json
 .claude/
 .beads/
+.gt-nats-pids/
+daemon/
+deacon/
+defender/
+events/
+doctor_output.txt
+out.txt
 
 # Beads / Dolt files (added by bd init)
 .dolt/

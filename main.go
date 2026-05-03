@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -34,11 +35,18 @@ type openRouterModel struct {
 	Created             int64    `json:"created"`
 }
 
+type ideModel struct {
+	ID       string `yaml:"id"`
+	Cooldown string `yaml:"cooldown"`
+	Endpoint string `yaml:"endpoint"`
+}
+
 type modelsConfig struct {
-	ReliableFree   []string `yaml:"reliableFree"`
-	NvidiaReliable []string `yaml:"nvidiaReliable"`
-	CuratedPaid    []string `yaml:"curatedPaid"`
-	ExcludeModels  []string `yaml:"excludeModels"`
+	ReliableFree   []string   `yaml:"reliableFree"`
+	NvidiaReliable []string   `yaml:"nvidiaReliable"`
+	CuratedPaid    []string   `yaml:"curatedPaid"`
+	ExcludeModels  []string   `yaml:"excludeModels"`
+	IdeModels      []ideModel `yaml:"ideModels"`
 }
 
 var (
@@ -72,8 +80,8 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d reliable free, %d NVIDIA, and %d curated paid models from config", 
-		len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid))
+	log.Printf("[INFO] Loaded %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config", 
+		len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels))
 }
 
 func isExcluded(model string) bool {
@@ -133,6 +141,7 @@ var (
 	debugMode bool
 	traceMode bool
 	allowPaid bool
+	allowIDE  bool
 	toolRegex = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
 	paramRegex = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
 )
@@ -190,9 +199,21 @@ func max(a, b int) int {
 	return b
 }
 
-func calculateStandardCooldown(errorCount int) time.Duration {
-	// More aggressive recovery - shorter cooldowns
-	// Error 1: 10s, Error 2: 30s, Error 3+: 60s max
+func calculateModelCooldown(model string, errorCount int) time.Duration {
+	configMutex.RLock()
+	conf := globalModelsConfig
+	configMutex.RUnlock()
+
+	// Check if this is an IDE model with a custom cooldown
+	for _, m := range conf.IdeModels {
+		if m.ID == model && m.Cooldown != "" {
+			if d, err := time.ParseDuration(m.Cooldown); err == nil {
+				return d
+			}
+		}
+	}
+
+	// Standard cooldown logic for other models
 	n := max(1, errorCount)
 	if n == 1 {
 		return 10 * time.Second
@@ -493,7 +514,7 @@ func markCooldown(model string) {
 		cooldowns[model] = entry
 	}
 	entry.ErrorCount++
-	cd := calculateStandardCooldown(entry.ErrorCount)
+	cd := calculateModelCooldown(model, entry.ErrorCount)
 	entry.CooldownEnd = time.Now().Add(cd)
 	saveCooldowns()
 	cooldownMu.Unlock()
@@ -741,6 +762,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Tier 6: Local IDE Fallbacks (Opt-in)
+	if allowIDE {
+		for _, m := range conf.IdeModels {
+			if !isCooldown(m.ID) && !isExcluded(m.ID) {
+				candidates = append(candidates, m.ID)
+			}
+		}
+	}
+
 	// If all are in cooldown, only try free models - never fall back to paid models
 	if len(candidates) == 0 {
 		log.Printf("[DEBUG] candidates empty, checking models: or=%s len(models)=%d len(nvidiaModels)=%d", originalModel, len(models), len(nvidiaModels))
@@ -785,7 +815,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				   strings.HasPrefix(candidate, "01-ai/") ||
 				   strings.HasPrefix(candidate, "deepseek/")
 
-		if strings.Contains(candidate, "claude-3-5-sonnet") {
+		isIDE := false
+		for _, m := range conf.IdeModels {
+			if m.ID == candidate {
+				isIDE = true
+				targetURL = m.Endpoint + "/v1/chat/completions"
+				apiKey = "dummy" // IDEs usually don't need a key from the proxy
+				break
+			}
+		}
+
+		if isIDE {
+			// No-op, targetURL already set
+		} else if strings.Contains(candidate, "claude-3-5-sonnet") {
 			targetURL = "https://api.anthropic.com/v1/messages"
 			apiKey = os.Getenv("ANTHROPIC_API_KEY")
 			isAnthropic = true
@@ -797,16 +839,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			apiKey = os.Getenv("OPENROUTER_API_KEY")
 		}
 
-		// Skip models that need missing API keys (don't cooldown - might be available later)
-		if apiKey == "" {
-			log.Printf("[DEBUG] Skipping %s - API key not available", candidate)
+		if !isIDE && apiKey == "" {
 			continue
 		}
 
 		var outboundBody []byte
 
 		if bodyMap != nil {
-			// Work on a copy of the bodyMap to avoid accumulating changes across retries
 			currentBody := make(map[string]interface{})
 			for k, v := range bodyMap {
 				currentBody[k] = v
@@ -859,7 +898,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			outboundBody = bodyBytes
 		}
 
-		req, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewBuffer(outboundBody))
+		// Use an independent context with a generous timeout so client disconnects
+		// (e.g. opencode timeout) don't immediately abort the upstream request.
+		upCtx, upCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)
 			continue
@@ -880,17 +922,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
+		req.Header.Set("X-Freeride-Fallback", "true") // Loop prevention for IDE bridges
 
 
 		log.Printf("Attempting request with model: %s (via %s)", candidate, targetURL)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			log.Printf("Request to %s failed: %v", candidate, err)
-			if err != context.Canceled {
+			if !errors.Is(err, context.Canceled) {
 				markCooldown(candidate)
 			} else {
 				log.Printf("[DEBUG] Context canceled for %s, skipping cooldown", candidate)
 			}
+			upCancel()
 			continue
 		}
 
@@ -922,8 +966,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(resp.StatusCode)
 				w.Write(errorBody)
+				upCancel()
 				return
 			}
+			upCancel()
 			continue
 		}
 
@@ -955,6 +1001,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else {
 			copyResponse(w, resp, originalModel)
 		}
+		upCancel()
 		return
 	}
 
@@ -1693,6 +1740,46 @@ func sanitizeBody(body map[string]interface{}) {
 		delete(body, "prompt")
 	}
 
+	// 7. Truncate extremely large messages to avoid 400 errors (Total payload > 1MB of text)
+	if msgs, ok := body["messages"].([]interface{}); ok {
+		totalLen := 0
+		for _, m := range msgs {
+			if mMap, ok := m.(map[string]interface{}); ok {
+				if content, ok := mMap["content"].(string); ok {
+					totalLen += len(content)
+				}
+			}
+		}
+
+		if totalLen > 1000000 {
+			log.Printf("[DEBUG] Payload too large (%d bytes), truncating largest messages...", totalLen)
+			for totalLen > 1000000 {
+				maxIdx := -1
+				maxLen := 0
+				for i, m := range msgs {
+					if mMap, ok := m.(map[string]interface{}); ok {
+						if content, ok := mMap["content"].(string); ok {
+							if len(content) > maxLen {
+								maxLen = len(content)
+								maxIdx = i
+							}
+						}
+					}
+				}
+				if maxIdx == -1 || maxLen < 10000 {
+					break
+				}
+				mMap := msgs[maxIdx].(map[string]interface{})
+				content := mMap["content"].(string)
+				// Truncate from the middle to keep context of start and end
+				keep := 10000 
+				newContent := content[:keep] + "\n\n... [TRUNCATED BY FREERIDE PROXY TO PREVENT CONTEXT OVERFLOW] ...\n\n" + content[len(content)-keep:]
+				mMap["content"] = newContent
+				totalLen -= (maxLen - len(newContent))
+			}
+		}
+	}
+
 	// 6. NVIDIA/Mistral Specific: Strip 'tool_choice' if it's "auto" (avoids 400 errors)
 	// and strip 'parallel_tool_calls' which NVIDIA NIM doesn't support yet for all models
 	model, _ := body["model"].(string)
@@ -1786,6 +1873,7 @@ func main() {
 	flag.BoolVar(&debugMode, "debug", false, "Enable debug logging")
 	flag.BoolVar(&traceMode, "trace", false, "Enable extremely verbose trace logging")
 	flag.BoolVar(&allowPaid, "allow-paid", false, "Allow using paid models for complex requests or as fallback")
+	flag.BoolVar(&allowIDE, "allow-ide", false, "Allow using local IDE models as fallback")
 	flag.Parse()
 
 	// Clean up stale cooldowns on startup

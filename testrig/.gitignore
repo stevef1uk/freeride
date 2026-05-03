@@ -12,3 +12,4 @@ __pycache__/
 state.json
 CLAUDE.md
 CLAUDE.local.md
+.land-worktree/
