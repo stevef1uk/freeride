@@ -3,10 +3,18 @@
 # Auto-submits the --prompt via the TUI server API so agents start working
 # immediately without manual interaction.
 
+# Force opencode to route through the Freeride proxy
 export OPENAI_BASE_URL="http://localhost:11434/v1"
 export OPENAI_API_BASE="http://localhost:11434/v1"
 export ANTHROPIC_BASE_URL="http://localhost:11434/v1"
 export OPENAI_API_KEY="dummy"
+
+# Resolve opencode binary path even when HOME is unset (tmux/gt env quirk)
+if [ -z "${HOME:-}" ]; then
+    HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+    export HOME
+fi
+OPENCODE_BIN="${HOME}/.opencode/bin/opencode"
 
 args=()
 prompt=""
@@ -45,7 +53,7 @@ if [ -z "$port" ]; then
 fi
 
 # Build the opencode command with the selected port
-opencmd=(~/.opencode/bin/opencode --port "$port" "${args[@]}")
+opencmd=("$OPENCODE_BIN" --port "$port" "${args[@]}")
 
 if [ -n "$prompt" ]; then
     # Include the prompt flag so opencode pre-fills it
