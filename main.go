@@ -827,10 +827,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		if isIDE {
 			// No-op, targetURL already set
-		} else if strings.Contains(candidate, "claude-3-5-sonnet") {
-			targetURL = "https://api.anthropic.com/v1/messages"
-			apiKey = os.Getenv("ANTHROPIC_API_KEY")
-			isAnthropic = true
 		} else if isNvidia {
 			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 			apiKey = os.Getenv("NVIDIA_API_KEY")
@@ -2468,7 +2464,7 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 				tools = append(tools, map[string]interface{}{
 					"type": "tool_use",
 					"id":   "call_bt_" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					"name": "Bash",
+					"name": "run_terminal_command",
 					"input": map[string]interface{}{
 						"command": command,
 					},
@@ -2488,7 +2484,7 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 				tools = append(tools, map[string]interface{}{
 					"type": "tool_use",
 					"id":   "call_run_" + fmt.Sprintf("%d", time.Now().UnixNano()),
-					"name": "Bash",
+					"name": "run_terminal_command",
 					"input": map[string]interface{}{
 						"command": command,
 					},

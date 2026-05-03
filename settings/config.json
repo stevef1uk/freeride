@@ -1,8 +1,23 @@
 {
   "type": "town-settings",
   "version": 1,
+  "session_transport": "nats",
   "default_agent": "opencode",
   "agents": {
+    "claude": {
+      "command": "/home/stevef/dev/freeride/claude_wrapper.sh",
+      "args": [
+        "--dangerously-skip-permissions"
+      ],
+      "env": {
+        "ANTHROPIC_BASE_URL": "http://localhost:11434/v1"
+      },
+      "tmux": {
+        "process_names": [
+          "claude"
+        ]
+      }
+    },
     "opencode": {
       "command": "/home/stevef/dev/freeride/opencode_wrapper.sh",
       "args": [
