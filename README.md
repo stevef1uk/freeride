@@ -207,6 +207,7 @@ OPENAI_API_KEY=dummy
 | `Rate limited` (429) | Free model overloaded | Wait 10s or use NVIDIA models only |
 | `No models available` | All models in cooldown | Check `cooldowns.json` and restart proxy |
 | `404 Not Found` | Model no longer exists | Update `models.yaml` to remove deprecated models |
+| Agent timing out during startup | Wrapper script blocking | Use `exec` in your wrapper to replace the shell process |
 | Proxy not responding | Freeride not running | Run `./freeride --debug > freeride_live.log 2>&1 &` |
 
 ### Model Configuration
