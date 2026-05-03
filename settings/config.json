@@ -1,0 +1,21 @@
+{
+  "type": "town-settings",
+  "version": 1,
+  "default_agent": "opencode",
+  "agents": {
+    "opencode": {
+      "command": "/home/stevef/dev/freeride/opencode_wrapper.sh",
+      "args": ["--model", "openai/gpt-4o"],
+      "env": {
+        "OPENAI_BASE_URL": "http://localhost:11434/v1",
+        "OPENAI_API_BASE": "http://localhost:11434/v1",
+        "ANTHROPIC_BASE_URL": "http://localhost:11434/v1",
+        "OPENAI_API_KEY": "dummy",
+        "OPENCODE_PERMISSION": "{\"*\":\"allow\"}"
+      },
+      "tmux": {
+        "process_names": ["opencode"]
+      }
+    }
+  }
+}
