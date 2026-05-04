@@ -9,53 +9,15 @@
     "deacon": "gt-agent-local",
     "witness": "gt-agent-local",
     "refinery": "gt-agent-local",
-    "crew": "opencode"
+    "crew": "gt-agent-local"
   },
   "agents": {
-    "claude": {
-      "command": "claude",
-      "args": [
-        "--dangerously-skip-permissions"
-      ],
-      "env": {
-        "ANTHROPIC_BASE_URL": "http://localhost:11434/v1"
-      },
-      "tmux": {
-        "process_names": [
-          "claude"
-        ]
-      }
-    },
-    "opencode": {
-      "command": "/home/stevef/.opencode/bin/opencode",
-      "args": [
-        "--model",
-        "openai/gpt-4o"
-      ],
-      "env": {
-        "OPENAI_BASE_URL": "http://localhost:11434/v1",
-        "OPENAI_API_BASE": "http://localhost:11434/v1",
-        "ANTHROPIC_BASE_URL": "http://localhost:11434/v1",
-        "OPENAI_API_KEY": "dummy",
-        "OPENCODE_PERMISSION": "{\"*\":\"allow\"}"
-      },
-      "tmux": {
-        "process_names": [
-          "opencode"
-        ]
-      }
-    },
     "gt-agent-local": {
       "command": "/home/stevef/.local/bin/gt-agent",
       "args": [],
       "env": {
         "LLM_ENDPOINT": "http://localhost:11434/v1/chat/completions",
         "LLM_MODEL": "meta/llama-3.2-11b-vision-instruct"
-      },
-      "tmux": {
-        "process_names": [
-          "gt-agent"
-        ]
       }
     }
   }
