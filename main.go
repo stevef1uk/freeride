@@ -80,7 +80,7 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config", 
+	log.Printf("[INFO] Loaded %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config",
 		len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels))
 }
 
@@ -94,8 +94,6 @@ func isExcluded(model string) bool {
 	}
 	return false
 }
-
-
 
 type nvidiaModel struct {
 	ID         string      `json:"id"`
@@ -138,11 +136,11 @@ var (
 	cooldowns  = make(map[string]*cooldownEntry)
 	cooldownMu sync.RWMutex
 
-	debugMode bool
-	traceMode bool
-	allowPaid bool
-	allowIDE  bool
-	toolRegex = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
+	debugMode  bool
+	traceMode  bool
+	allowPaid  bool
+	allowIDE   bool
+	toolRegex  = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
 	paramRegex = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
 )
 
@@ -330,32 +328,31 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 			log.Printf("[DEBUG] NVIDIA Model ID: %s", m.ID)
 		}
 		lowerID := strings.ToLower(m.ID)
-		
+
 		// Broaden prefix check to include partners hosted on NVIDIA NIM
-		validPrefix := strings.HasPrefix(m.ID, "nvidia/") || 
-		              strings.HasPrefix(m.ID, "meta/") || 
-					  strings.HasPrefix(m.ID, "google/") || 
-					  strings.HasPrefix(m.ID, "mistralai/") || 
-					  strings.HasPrefix(m.ID, "microsoft/") ||
-					  strings.HasPrefix(m.ID, "deepseek/")
+		validPrefix := strings.HasPrefix(m.ID, "nvidia/") ||
+			strings.HasPrefix(m.ID, "meta/") ||
+			strings.HasPrefix(m.ID, "google/") ||
+			strings.HasPrefix(m.ID, "mistralai/") ||
+			strings.HasPrefix(m.ID, "microsoft/") ||
+			strings.HasPrefix(m.ID, "deepseek/")
 
 		// Only include chat/instruct models (not embeddings, translators, vision-only, safety, etc)
-		isChatModel := validPrefix && 
-		              !strings.Contains(lowerID, "embed") && 
-					  !strings.Contains(lowerID, "safety") && 
-					  !strings.Contains(lowerID, "guard") && 
-					  !strings.Contains(lowerID, "clip") && 
-					  !strings.Contains(lowerID, "vila") && 
-					  !strings.Contains(lowerID, "riva") && 
-					  !strings.Contains(lowerID, "calibration") && 
-					  !strings.Contains(lowerID, "pixel") && 
-					  !strings.Contains(lowerID, "neva") && 
-					  (strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron") || strings.Contains(lowerID, "chat") || strings.Contains(lowerID, "coder"))
+		isChatModel := validPrefix &&
+			!strings.Contains(lowerID, "embed") &&
+			!strings.Contains(lowerID, "safety") &&
+			!strings.Contains(lowerID, "guard") &&
+			!strings.Contains(lowerID, "clip") &&
+			!strings.Contains(lowerID, "vila") &&
+			!strings.Contains(lowerID, "riva") &&
+			!strings.Contains(lowerID, "calibration") &&
+			!strings.Contains(lowerID, "pixel") &&
+			!strings.Contains(lowerID, "neva") &&
+			(strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron") || strings.Contains(lowerID, "chat") || strings.Contains(lowerID, "coder"))
 
 		if !isChatModel {
 			continue
 		}
-
 
 		// Mark models that support tools/function calling
 		// Nemotron and newerLlama models generally support tools
@@ -635,23 +632,23 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	isOriginalFree := false
 	if originalModel != "" {
 		if !isCooldown(originalModel) {
-		for _, m := range models {
-			if m.ID == originalModel {
-				isOriginalFree = m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
-				break
-			}
-		}
-		if !isOriginalFree {
-			for _, m := range nvidiaModels {
+			for _, m := range models {
 				if m.ID == originalModel {
-					isOriginalFree = true
+					isOriginalFree = m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
 					break
 				}
 			}
-		}
-		if isOriginalFree && !isExcluded(originalModel) {
-			candidates = append(candidates, originalModel)
-		}
+			if !isOriginalFree {
+				for _, m := range nvidiaModels {
+					if m.ID == originalModel {
+						isOriginalFree = true
+						break
+					}
+				}
+			}
+			if isOriginalFree && !isExcluded(originalModel) {
+				candidates = append(candidates, originalModel)
+			}
 		}
 	}
 
@@ -673,7 +670,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
 
 	// Tier 3: Specific Reliable Free OpenRouter models from config
 	for _, fid := range conf.ReliableFree {
@@ -701,7 +697,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
 
 	// Tier 3.5: Other Free OpenRouter models
 	for _, m := range models {
@@ -805,15 +800,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		var targetURL string
 		var apiKey string
 
-		isNvidia := strings.HasPrefix(candidate, "nvidia/") || 
-		           strings.HasPrefix(candidate, "meta/") || 
-				   strings.HasPrefix(candidate, "mistralai/") || 
-				   strings.HasPrefix(candidate, "microsoft/") ||
-				   strings.HasPrefix(candidate, "qwen/") ||
-				   strings.HasPrefix(candidate, "abacusai/") ||
-				   strings.HasPrefix(candidate, "ai21labs/") ||
-				   strings.HasPrefix(candidate, "01-ai/") ||
-				   strings.HasPrefix(candidate, "deepseek/")
+		isNvidia := strings.HasPrefix(candidate, "nvidia/") ||
+			strings.HasPrefix(candidate, "meta/") ||
+			strings.HasPrefix(candidate, "mistralai/") ||
+			strings.HasPrefix(candidate, "microsoft/") ||
+			strings.HasPrefix(candidate, "qwen/") ||
+			strings.HasPrefix(candidate, "abacusai/") ||
+			strings.HasPrefix(candidate, "ai21labs/") ||
+			strings.HasPrefix(candidate, "01-ai/") ||
+			strings.HasPrefix(candidate, "deepseek/")
 
 		isIDE := false
 		for _, m := range conf.IdeModels {
@@ -862,7 +857,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			currentBody["model"] = candidate
 			// Strip :free suffix (provider doesn't use it)
 			currentBody["model"] = strings.TrimSuffix(candidate, ":free")
-			
+
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)
 
@@ -920,7 +915,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
 		req.Header.Set("X-Freeride-Fallback", "true") // Loop prevention for IDE bridges
 
-
 		log.Printf("Attempting request with model: %s (via %s)", candidate, targetURL)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -936,7 +930,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("Model %s returned status %d. Target: %s", candidate, resp.StatusCode, targetURL)
-			
+
 			// Log error body
 			errorBody, _ := ioutil.ReadAll(resp.Body)
 			log.Printf("[ERROR] Model %s response body: %s", candidate, string(errorBody))
@@ -946,10 +940,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 404 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 				bodyStr := string(errorBody)
 				// Don't cooldown on client-caused errors (like context length)
-				isContextError := strings.Contains(bodyStr, "context length") || 
-								 strings.Contains(bodyStr, "too many input tokens") ||
-								 strings.Contains(bodyStr, "maximum context length")
-				
+				isContextError := strings.Contains(bodyStr, "context length") ||
+					strings.Contains(bodyStr, "too many input tokens") ||
+					strings.Contains(bodyStr, "maximum context length")
+
 				if !isContextError {
 					markCooldown(candidate)
 				} else {
@@ -1044,7 +1038,7 @@ func translateResponse(body []byte, overrideModel string) []byte {
 
 	matches := toolRegex.FindAllStringSubmatch(content, -1)
 	var toolCalls []map[string]interface{}
-	
+
 	// Pattern 1: XML tags (legacy/specific models)
 	for _, match := range matches {
 		name := match[1]
@@ -1210,9 +1204,9 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 		"type":         "response.output_item.added",
 		"output_index": 0,
 		"item": map[string]interface{}{
-			"type": "message",
-			"id":   itemID,
-			"role": "assistant",
+			"type":   "message",
+			"id":     itemID,
+			"role":   "assistant",
 			"status": "in_progress",
 		},
 	})
@@ -1281,13 +1275,13 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 										tID = fmt.Sprintf("call_%d", time.Now().UnixNano())
 									}
 									sendEvent("response.function_call_arguments.delta", map[string]interface{}{
-										"type":           "response.function_call_arguments.delta",
-										"response_id":    respID,
-										"output_index":   0,
-										"item_id":        itemID,
-										"call_id":        tID,
-										"name":           name,
-										"delta":          "", // Arguments come in later chunks usually
+										"type":         "response.function_call_arguments.delta",
+										"response_id":  respID,
+										"output_index": 0,
+										"item_id":      itemID,
+										"call_id":      tID,
+										"name":         name,
+										"delta":        "", // Arguments come in later chunks usually
 									})
 								}
 							}
@@ -1318,9 +1312,9 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 		"type":         "response.output_item.done",
 		"output_index": 0,
 		"item": map[string]interface{}{
-			"type": "message",
-			"id":   itemID,
-			"role": "assistant",
+			"type":   "message",
+			"id":     itemID,
+			"role":   "assistant",
 			"status": "completed",
 		},
 	}
@@ -1335,8 +1329,8 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 	if hasToolCalls {
 		itemDone["item"].(map[string]interface{})["content"] = []interface{}{
 			map[string]interface{}{
-				"type":      "tool_use",
-				"tool_use":  toolCalls,
+				"type":     "tool_use",
+				"tool_use": toolCalls,
 			},
 		}
 	}
@@ -1768,7 +1762,7 @@ func sanitizeBody(body map[string]interface{}) {
 				mMap := msgs[maxIdx].(map[string]interface{})
 				content := mMap["content"].(string)
 				// Truncate from the middle to keep context of start and end
-				keep := 10000 
+				keep := 10000
 				newContent := content[:keep] + "\n\n... [TRUNCATED BY FREERIDE PROXY TO PREVENT CONTEXT OVERFLOW] ...\n\n" + content[len(content)-keep:]
 				mMap["content"] = newContent
 				totalLen -= (maxLen - len(newContent))
@@ -1779,16 +1773,16 @@ func sanitizeBody(body map[string]interface{}) {
 	// 6. NVIDIA/Mistral Specific: Strip 'tool_choice' if it's "auto" (avoids 400 errors)
 	// and strip 'parallel_tool_calls' which NVIDIA NIM doesn't support yet for all models
 	model, _ := body["model"].(string)
-	isNvidiaModel := strings.HasPrefix(model, "nvidia/") || 
-		           strings.HasPrefix(model, "meta/") || 
-				   strings.HasPrefix(model, "google/") || 
-				   strings.HasPrefix(model, "mistralai/") || 
-				   strings.HasPrefix(model, "microsoft/") ||
-				   strings.HasPrefix(model, "qwen/") ||
-				   strings.HasPrefix(model, "abacusai/") ||
-				   strings.HasPrefix(model, "ai21labs/") ||
-				   strings.HasPrefix(model, "01-ai/") ||
-				   strings.HasPrefix(model, "deepseek/")
+	isNvidiaModel := strings.HasPrefix(model, "nvidia/") ||
+		strings.HasPrefix(model, "meta/") ||
+		strings.HasPrefix(model, "google/") ||
+		strings.HasPrefix(model, "mistralai/") ||
+		strings.HasPrefix(model, "microsoft/") ||
+		strings.HasPrefix(model, "qwen/") ||
+		strings.HasPrefix(model, "abacusai/") ||
+		strings.HasPrefix(model, "ai21labs/") ||
+		strings.HasPrefix(model, "01-ai/") ||
+		strings.HasPrefix(model, "deepseek/")
 
 	log.Printf("[DEBUG] sanitizeBody: model=%q isNvidia=%v tool_choice=%v", model, isNvidiaModel, body["tool_choice"])
 	if isNvidiaModel {
@@ -1834,7 +1828,7 @@ func handleHello(w http.ResponseWriter, r *http.Request) {
 func handleCountTokens(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] Spoofing count_tokens response")
 	w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"input_tokens": 100}`))
 }
 
@@ -1875,7 +1869,6 @@ func main() {
 	// Clean up stale cooldowns on startup
 	cleanStaleCooldowns()
 	loadCooldowns()
-
 
 	loadModelsConfig()
 
@@ -2018,11 +2011,11 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 	}
 
 	anthropicResp := map[string]interface{}{
-		"id":      "msg_" + fmt.Sprintf("%d", time.Now().Unix()),
-		"type":    "message",
-		"role":    "assistant",
-		"model":   "claude-3-5-sonnet-20241022",
-		"content": anthropicContent,
+		"id":            "msg_" + fmt.Sprintf("%d", time.Now().Unix()),
+		"type":          "message",
+		"role":          "assistant",
+		"model":         "claude-3-5-sonnet-20241022",
+		"content":       anthropicContent,
 		"stop_reason":   stopReason,
 		"stop_sequence": nil,
 		"usage": map[string]interface{}{
@@ -2055,16 +2048,16 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	sendAnthropicEvent(w, flusher, "message_start", map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
-			"id":      messageID,
-			"type":    "message",
-			"role":    "assistant",
-			"model":   modelName,
-			"content": []interface{}{},
-			"tools":   []interface{}{},
+			"id":       messageID,
+			"type":     "message",
+			"role":     "assistant",
+			"model":    modelName,
+			"content":  []interface{}{},
+			"tools":    []interface{}{},
 			"metadata": map[string]interface{}{},
 			"usage": map[string]interface{}{
-				"input_tokens":              0,
-				"output_tokens":             0,
+				"input_tokens":                0,
+				"output_tokens":               0,
 				"cache_creation_input_tokens": 0,
 				"cache_read_input_tokens":     0,
 			},
@@ -2090,7 +2083,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	toolCallIDs := make(map[int]string)
 	var fullText string
 	var emittedText string
-	
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -2121,51 +2114,51 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 						if content != "" {
 							hasContent = true
 							fullText += content
-							
+
 							// Check for XML tool calls in the buffered text
 							matches := toolRegex.FindAllStringSubmatch(fullText, -1)
 							if len(matches) > 0 {
 								for _, match := range matches {
 									tName := match[1]
 									tParams := match[2]
-									
+
 									// Mapping common tool names
 									toolName := tName
 									if toolName == "shell" {
 										toolName = "Bash"
 									}
-									
+
 									// Parse params
 									args := make(map[string]interface{})
 									paramMatches := paramRegex.FindAllStringSubmatch(tParams, -1)
 									for _, pm := range paramMatches {
 										args[pm[1]] = pm[2]
 									}
-									
+
 									log.Printf("[TRANS] Translating XML tool call in stream: %s", toolName)
-									
+
 									// Emit tool_use
 									tID := fmt.Sprintf("call_%d_%s", time.Now().Unix(), toolName)
 									sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
-										"type": "content_block_start",
+										"type":  "content_block_start",
 										"index": 1,
 										"content_block": map[string]interface{}{
-											"type": "tool_use",
-											"id": tID,
-											"name": toolName,
+											"type":  "tool_use",
+											"id":    tID,
+											"name":  toolName,
 											"input": args,
 										},
 									})
 									sendAnthropicEvent(w, flusher, "content_block_stop", map[string]interface{}{
-										"type": "content_block_stop",
+										"type":  "content_block_stop",
 										"index": 1,
 									})
-									
+
 									// Remove the XML from fullText so it doesn't get emitted as text delta
 									fullText = strings.Replace(fullText, match[0], "", 1)
 								}
 							}
-							
+
 							// Safety: If fullText contains an UNFINISHED <invoke tag, we only emit text UP TO the start of that tag.
 							// This prevents partial XML from leaking into the text stream while still delivering preceding text.
 							emitLimit := len(fullText)
@@ -2265,7 +2258,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 		for _, et := range extractedTools {
 			tID := fmt.Sprintf("call_ext_%d", time.Now().UnixNano())
 			sendAnthropicEvent(w, flusher, "content_block_start", map[string]interface{}{
-				"type": "content_block_start",
+				"type":  "content_block_start",
 				"index": maxIndex + 1,
 				"content_block": map[string]interface{}{
 					"type":  "tool_use",
@@ -2359,7 +2352,7 @@ func repairJSONArguments(args string) string {
 	// 2. If it's NOT valid JSON, it's likely a partial or broken chunk.
 	// We try to do some aggressive regex fixes for common Llama/Mistral errors.
 	repaired := args
-	
+
 	// Fix string-wrapped arrays: "todos": "[...]" -> "todos": [...]
 	// We look for "key": "[ or "key": "{ and try to unescape the internal content
 	re := regexp.MustCompile(`"([^"]+)"\s*:\s*"(\[.*?\]|\{.*?\})"`)
@@ -2418,7 +2411,7 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 			command := strings.TrimSpace(m[1])
 			if command != "" {
 				command = strings.TrimSpace(command)
-				
+
 				// Normalization: Strip common hallucinations
 				if strings.HasPrefix(command, "gt hook ") {
 					parts := strings.Fields(command)
@@ -2508,4 +2501,3 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 
 	return finalTools
 }
-
