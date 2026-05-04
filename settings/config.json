@@ -2,10 +2,18 @@
   "type": "town-settings",
   "version": 1,
   "session_transport": "nats",
-  "default_agent": "opencode",
+  "default_agent": "gt-agent-local",
+  "role_agents": {
+    "polecat": "gt-agent-local",
+    "mayor": "gt-agent-local",
+    "deacon": "gt-agent-local",
+    "witness": "gt-agent-local",
+    "refinery": "gt-agent-local",
+    "crew": "opencode"
+  },
   "agents": {
     "claude": {
-      "command": "/home/stevef/dev/freeride/claude_wrapper.sh",
+      "command": "claude",
       "args": [
         "--dangerously-skip-permissions"
       ],
@@ -19,7 +27,7 @@
       }
     },
     "opencode": {
-      "command": "/home/stevef/dev/freeride/opencode_wrapper.sh",
+      "command": "/home/stevef/.opencode/bin/opencode",
       "args": [
         "--model",
         "openai/gpt-4o"
@@ -34,6 +42,19 @@
       "tmux": {
         "process_names": [
           "opencode"
+        ]
+      }
+    },
+    "gt-agent-local": {
+      "command": "/home/stevef/.local/bin/gt-agent",
+      "args": [],
+      "env": {
+        "LLM_ENDPOINT": "http://localhost:11434/v1/chat/completions",
+        "LLM_MODEL": "meta/llama-3.2-11b-vision-instruct"
+      },
+      "tmux": {
+        "process_names": [
+          "gt-agent"
         ]
       }
     }

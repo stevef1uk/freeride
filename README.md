@@ -1,143 +1,150 @@
-# Freeride Proxy (v1.1.0)
+# Freeride Proxy (v1.2.0)
 
-This is a stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from both **OpenRouter** and **NVIDIA (NIM)** using the `freeride` capability logic.
+A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from both **OpenRouter** and **NVIDIA (NIM)**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
 
-It runs locally on port `:11434` (Ollama's default port), intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`). 
+Use it **standalone** with any OpenAI-compatible client, or as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration.
 
-## Latest Changes (v1.1.0)
+---
 
-- **Direct NVIDIA NIM Integration**: Now supports direct, zero-cost routing to `integrate.api.nvidia.com` for high-performance partner models (Meta Llama, Mistral, Google Gemma, etc.).
-- **Strict Cost Optimization**: Eliminated unintended paid fallbacks. If free models are exhausted or in cooldown, the proxy refuses to route to paid models, returning a 503 error instead to protect your credits.
-- **Improved Prefix Handling**: Automatically manages model prefixes (e.g., `meta/`, `google/`) for direct API compatibility, ensuring requests to partner models route correctly.
-- **Proxy-Magic (Resilient Tool-Use)**: Implemented a fallback translation layer that intercepts conversational command mentions (e.g., "I will now run `gt hook`") and markdown code blocks. These are automatically converted into official tool calls, enabling autonomous tool-use for free-tier models (Mixtral/Llama) that fail to adhere to the standard JSON tool API.
+## What's New (v1.2.0)
+
+- **Headless Agent Support**: Native integration with Gas Town's `gt-agent` — a lightweight one-shot worker that drains nudge queues, calls LLMs via this proxy, executes shell commands, and exits. No TUI, no tmux, no idle processes.
+- **NATS Transport**: Gas Town agents now communicate over NATS (port 4222) instead of tmux. Agents start as ephemeral processes, do their work, and exit cleanly.
+- **Proxy-Magic (Resilient Tool-Use)**: Intercepts conversational command mentions (e.g., "I will now run `gt hook`") and markdown code blocks, converting them into official tool calls. Enables autonomous tool-use for free-tier models that struggle with strict JSON tool APIs.
+- **Strict Cost Optimization**: Eliminated unintended paid fallbacks. If free models are exhausted, the proxy returns 503 rather than routing to paid models.
 - **Robust Tiered Selection**:
-  - **Tier 1**: Prioritizes the original requested model if it is confirmed free.
+  - **Tier 1**: Prioritizes the original requested model if confirmed free.
   - **Tier 2**: Falls back to tool-capable NVIDIA NIM models (highly reliable and fast).
   - **Tier 3**: Falls back to reliable OpenRouter free models.
 
+---
+
 ## Prerequisites
 
-- Go 1.18+ (The proxy builds cleanly on modern Linux/macOS environments).
-- A **.env file** or environment variables for your API keys.
-- An **OpenRouter API key**.
-- An **NVIDIA API key** (Required for the highest performance free models).
-
-## CLI Configuration
-
-The proxy supports the following command-line flags:
-
-- `--debug`: Enables verbose logging of requests, internal routing decisions, and API responses.
-- `--allow-paid`: (Disabled by default) Allows the proxy to use paid models (e.g., Claude 3.5 Sonnet) for complex tasks or as a fallback. Without this flag, the proxy operates in **Strict Zero-Cost Mode**.
+- Go 1.18+ (for building from source)
+- An **OpenRouter API key** (for free OpenRouter models)
+- An **NVIDIA API key** (for highest-performance free NIM models)
 
 ## Building and Running
 
-1. Build the proxy:
+### Standalone Use
+
+1. Build:
    ```bash
    go build -o freeride main.go
    ```
 
-2. Configure your keys:
-   Create a `.env` file in the project root:
+2. Configure your keys in a `.env` file:
    ```env
    OPENROUTER_API_KEY=sk-or-v1-...
    NVIDIA_API_KEY=nvapi-...
    ```
 
-3. Run the proxy:
+3. Run:
    ```bash
    ./freeride --debug > freeride_live.log 2>&1 &
    ```
 
-## Testing
-
-A comprehensive integration test suite is included in `proxy_test.go`. It validates:
-- **SSE Streaming**: Full protocol translation for Beads and Anthropic.
-- **Tool Translation**: JSON schema mapping and tool-use lifecycle.
-- **Model Discovery**: Verifies that models from both OpenRouter and NVIDIA are correctly fetched, cached, and routable.
-
-To run the tests:
-```bash
-go test -v proxy_test.go main.go
-```
-
-## Integration with Common AI Tools
-
-### 1. Claude Code
-**Status: Fully Supported (with Streaming and Tool-Use)**
-
-Claude Code works perfectly with Freeride by translating Anthropic's Messages API into standard OpenAI chat completions.
-
-#### Quick Start
-1. **Bypass Subscription**: Mark onboarding as complete in `~/.claude.json`:
-   ```json
-   {
-     "hasCompletedOnboarding": true,
-     "authMethod": "console"
-   }
-   ```
-2. **Set Environment**:
+4. Test:
    ```bash
-   export ANTHROPIC_BASE_URL="http://localhost:11434"
-   export ANTHROPIC_API_KEY="sk-ant-api03-dummy-key-that-is-long-enough-to-pass-validation-abcdefghijklmnopqrstuvwxyz012345"
-   ```
-3. **Run in Autonomous Mode**:
-   ```bash
-   claude --dangerously-skip-permissions
+   curl -s http://localhost:11434/v1/models | head -5
    ```
 
-### 2. OpenCode
-**Status: Fully Supported**
-Point your compatibility variables to the local proxy:
+### CLI Flags
+
+- `--debug`: Verbose logging of requests, routing decisions, and API responses.
+- `--allow-paid`: Allows paid models as fallback. **Disabled by default** (strict zero-cost mode).
+
+---
+
+## Integration with AI Tools
+
+### OpenCode (TUI / Interactive)
+
+For interactive terminal use with a TUI:
+
 ```bash
 export OPENAI_BASE_URL="http://localhost:11434/v1"
-export OPENAI_API_KEY="dummy_key"
+export OPENAI_API_KEY="dummy"
+opencode --model openai/gpt-4o
 ```
+
+### Any OpenAI-Compatible Client
+
+Point any client that supports OpenAI-compatible endpoints to:
+- **Base URL**: `http://localhost:11434/v1`
+- **API Key**: `dummy` (or any non-empty string)
+- **Model**: `gpt-4o` or `claude-3-5-sonnet-20241022` (see Power Model Spoofing below)
+
+---
 
 ## Gas Town Integration
 
-**Freeride works as the LLM backend for Gas Town agents** (Claude, OpenCode, Codex, etc.). The proxy runs on `:11434` and forwards traffic to free models from OpenRouter and NVIDIA NIM.
+Freeride serves as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration. The proxy runs on `:11434`; agents communicate via NATS on `:4222`.
+
+### Architecture Overview
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
+│  Gas Town   │────▶│   NATS       │────▶│  gt-agent       │
+│  (Mayor,    │     │  (port 4222) │     │  (headless)     │
+│   Witness,  │     └──────────────┘     │  Drains nudges  │
+│   Deacon)   │                          │  Calls LLM      │
+└─────────────┘                          │  Executes work  │
+                                         │  Exits cleanly  │
+                                         └────────┬────────┘
+                                                  │
+                                                  ▼
+                                         ┌─────────────────┐
+                                         │  Freeride Proxy │
+                                         │  (port 11434)   │
+                                         │  Routes to free │
+                                         │  OpenRouter/NIM │
+                                         └─────────────────┘
+```
+
+### Agent Types
+
+| Agent | Role | Transport | Use Case |
+|-------|------|-----------|----------|
+| **gt-agent** | Headless worker | NATS | Automated background tasks (Mayor, Deacon, Witness, Refinery, Polecats) |
+| **opencode** | Interactive TUI | NATS | Interactive crew members requiring human oversight |
 
 ### Configuration
 
-#### 1. Environment Variables
-
-Before running any `gt` commands that launch agents, **set these in your parent shell** so Gastown passes them through to the agent processes:
-
-```bash
-export OPENAI_BASE_URL="http://localhost:11434/v1"
-export OPENAI_API_BASE="http://localhost:11434/v1"
-export ANTHROPIC_BASE_URL="http://localhost:11434/v1"
-export OPENAI_API_KEY="dummy"
-export ANTHROPIC_API_KEY="sk-ant-api03-dummy-key-that-is-long-enough-to-pass-validation-abcdefghijklmnopqrstuvwxyz012345"
-```
-
-You can persist these in your shell profile (`.bashrc`, `.zshrc`) or source them from a `.env` file before working with Gas Town.
-
-#### 2. GasTown Agent Configuration
-
-Create or update `gt/settings/config.json` in your project root:
+Create or update `settings/config.json` in your Gas Town project root:
 
 ```json
 {
   "type": "town-settings",
   "version": 1,
-  "default_agent": "opencode",
-  "crew_agents": {
-    "steve": "opencode"
+  "session_transport": "nats",
+  "default_agent": "gt-agent-local",
+  "role_agents": {
+    "polecat": "gt-agent-local",
+    "mayor": "gt-agent-local",
+    "deacon": "gt-agent-local",
+    "witness": "gt-agent-local",
+    "refinery": "gt-agent-local",
+    "crew": "opencode"
   },
   "agents": {
     "opencode": {
-      "command": "/home/stevef/dev/freeride/opencode_wrapper.sh",
+      "command": "/home/YOURNAME/.opencode/bin/opencode",
       "args": ["--model", "openai/gpt-4o"],
       "env": {
         "OPENAI_BASE_URL": "http://localhost:11434/v1",
         "OPENAI_API_BASE": "http://localhost:11434/v1",
-        "ANTHROPIC_BASE_URL": "http://localhost:11434/v1",
         "OPENAI_API_KEY": "dummy",
         "OPENCODE_PERMISSION": "{\"*\":\"allow\"}"
-      },
-      "tmux": {
-        "process_names": ["opencode"]
+      }
+    },
+    "gt-agent-local": {
+      "command": "/home/YOURNAME/.local/bin/gt-agent",
+      "args": [],
+      "env": {
+        "LLM_ENDPOINT": "http://localhost:11434/v1/chat/completions",
+        "LLM_MODEL": "meta/llama-3.2-11b-vision-instruct"
       }
     }
   }
@@ -145,28 +152,28 @@ Create or update `gt/settings/config.json` in your project root:
 ```
 
 **Key settings:**
-- `default_agent`: Set to `"opencode"` to use OpenCode as the default
-- `command`: Path to the `opencode_wrapper.sh` script
-- `args`: Pass `--model openai/gpt-4o` to enable full tool support (the proxy maps this to a free model)
-- `env`: These variables override any global settings and ensure routing through Freeride
+- `session_transport`: Set to `"nats"` for NATS-based session management (no tmux required)
+- `default_agent`: `"gt-agent-local"` for headless automated work
+- `role_agents.crew`: `"opencode"` for interactive TUI-based crew members
+- `gt-agent-local.env.LLM_ENDPOINT`: Points directly to Freeride's OpenAI-compatible endpoint
 
-#### 3. Wrapper Scripts
+### Running Gas Town
 
-Two convenience wrappers are included for direct agent usage outside of Gas Town:
-
-- **`claude_wrapper.sh`** — Launches Claude Code pointing at Freeride
-- **`opencode_wrapper.sh`** — Launches OpenCode pointing at Freeride with auto-prompt submission
-
-The `opencode_wrapper.sh` script:
-- Automatically selects a random ephemeral port for the TUI server
-- Starts opencode in the background
-- Auto-submits prompts via the TUI server API so agents start working immediately
-- Waits for opencode to finish, keeping the tmux session alive
-
-Usage:
 ```bash
-./claude_wrapper.sh
-./opencode_wrapper.sh --prompt "your prompt here"
+# 1. Ensure Freeride proxy is running
+./freeride --debug > freeride_live.log 2>&1 &
+
+# 2. Ensure NATS is available (Docker or standalone)
+# Docker: docker run -d --name gt-nats -p 4222:4222 nats:latest
+
+# 3. Start Gas Town services
+gt up
+
+# 4. Check status
+gt status
+
+# 5. Assign work to a polecat (automatic via Mayor, or manual)
+gt hook de-123 defender/polecats/obsidian
 ```
 
 ### Verification
@@ -175,27 +182,19 @@ Usage:
 ```bash
 curl -s http://localhost:11434/v1/models | head -5
 ```
-You should see a JSON list of available models.
 
 #### Check requests are routing through the proxy:
 ```bash
-# Monitor the proxy log in real-time
 tail -f freeride_live.log | grep -E "Attempting|succeeded|ERROR"
 ```
 
-#### Check the opencode process environment:
+#### Check agent processes:
 ```bash
-# Find opencode PID
-pgrep -f "opencode"
+# Should show gt-agent processes for headless agents
+ps aux | grep gt-agent | grep -v grep
 
-# Check its environment variables
-cat /proc/<PID>/environ | tr '\0' '\n' | grep -E "BASE_URL|API_KEY"
-```
-
-You should see:
-```
-OPENAI_BASE_URL=http://localhost:11434/v1
-OPENAI_API_KEY=dummy
+# Should show opencode only for interactive crew
+ps aux | grep opencode | grep -v grep
 ```
 
 ### Troubleshooting
@@ -207,10 +206,12 @@ OPENAI_API_KEY=dummy
 | `Rate limited` (429) | Free model overloaded | Wait 10s or use NVIDIA models only |
 | `No models available` | All models in cooldown | Check `cooldowns.json` and restart proxy |
 | `404 Not Found` | Model no longer exists | Update `models.yaml` to remove deprecated models |
-| Agent timing out during startup | Wrapper script blocking | Use `exec` in your wrapper to replace the shell process |
+| Agent not starting | NATS unavailable | Ensure NATS container/server is running on port 4222 |
 | Proxy not responding | Freeride not running | Run `./freeride --debug > freeride_live.log 2>&1 &` |
 
-### Model Configuration
+---
+
+## Model Configuration
 
 Edit `models.yaml` to control which models the proxy uses:
 
@@ -243,30 +244,38 @@ excludeModels:
 - `meta/llama-3.3-70b-instruct` ✅
 - `meta/llama-3.2-11b-vision-instruct` ✅
 
-**Note:** The proxy auto-discovers models from both OpenRouter and NVIDIA, but the `models.yaml` config prioritizes the listed models.
+The proxy auto-discovers models from both OpenRouter and NVIDIA, but `models.yaml` prioritizes the listed models.
+
+---
 
 ## Power Model Spoofing (Tool Support)
 
-Freeride automatically advertises `claude-3-5-sonnet-20241022` and `gpt-4o` at the top of its model list. **Always select these names** in your client configuration. Even though the proxy will route to a **free model** (like Llama 3.3 70B), using these names tricks clients into enabling their full suite of tools which are normally disabled for smaller models.
+Freeride automatically advertises `claude-3-5-sonnet-20241022` and `gpt-4o` at the top of its model list. **Always select these names** in your client configuration. Even though the proxy routes to a **free model** (like Llama 3.3 70B), using these names tricks clients into enabling their full suite of tools which are normally disabled for smaller models.
+
+---
 
 ## Auto-Recovery & Cooldown
 
 The proxy features transparent, proxy-level auto-recovery. If a request to a free model returns a rate limit (429) or server error (5xx), the proxy automatically intercepts the failure, places the failing model in cooldown, and retries the exact same request using the next highest-ranked free model.
 
 **State Persistence**: Cooldowns are saved to `cooldowns.json` and persist across restarts.
-+
-+## Proxy-Magic (Resilient Tool-Use)
-+
-+Free models (like Llama 3.3 or Mixtral) often struggle with strict JSON-based tool calling, frequently choosing to "talk about" running a command instead of actually triggering the tool.
-+
-+Freeride solves this by implementing **Proxy-Magic**:
-+1. **Markdown Extraction**: If a model returns a markdown bash block (```bash ... ```), the proxy automatically converts it into a `run_terminal_command` tool call.
-+2. **Conversational Extraction**: The proxy uses aggressive regex to catch conversational intent, such as:
-+   - "I will now run `gt hook`"
-+   - "I'm going to run `bd list`"
-+3. **Deduplication**: If a model both talks about and uses the tool, the proxy deduplicates the requests to prevent double-execution.
-+
-+This mechanism ensures that the **Gas Town** agent ecosystem remains fully autonomous even when running on zero-cost models.
+
+---
+
+## Proxy-Magic (Resilient Tool-Use)
+
+Free models (like Llama 3.3 or Mixtral) often struggle with strict JSON-based tool calling, frequently choosing to "talk about" running a command instead of actually triggering the tool.
+
+Freeride solves this by implementing **Proxy-Magic**:
+1. **Markdown Extraction**: If a model returns a markdown bash block (```bash ... ```), the proxy automatically converts it into a `run_terminal_command` tool call.
+2. **Conversational Extraction**: The proxy uses aggressive regex to catch conversational intent, such as:
+   - "I will now run `gt hook`"
+   - "I'm going to run `bd list`"
+3. **Deduplication**: If a model both talks about and uses the tool, the proxy deduplicates the requests to prevent double-execution.
+
+This mechanism ensures that the **Gas Town** agent ecosystem remains fully autonomous even when running on zero-cost models.
+
+---
 
 ## Supported Endpoints
 
@@ -275,5 +284,23 @@ The proxy features transparent, proxy-level auto-recovery. If a request to a fre
 - `POST /v1/messages`: Anthropic Messages endpoint (with full SSE translation).
 - `GET /v1/models`: Returns the current ranked list of all available free models.
 
+---
+
+## Testing
+
+A comprehensive integration test suite is included in `proxy_test.go`:
+
+```bash
+go test -v proxy_test.go main.go
+```
+
+Validates:
+- **SSE Streaming**: Full protocol translation.
+- **Tool Translation**: JSON schema mapping and tool-use lifecycle.
+- **Model Discovery**: Fetches, caches, and routes models from both OpenRouter and NVIDIA.
+
+---
+
 ## License
+
 MIT License.
