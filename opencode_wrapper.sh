@@ -59,7 +59,7 @@ if [ -z "$port" ]; then
 fi
 
 # Build command WITH --prompt so opencode loads it at start
-opencmd=("$OPENCODE_BIN" --port "$port")
+opencmd=("$OPENCODE_BIN" --port "$port" --model "openai/gpt-4o")
 if [ -n "$prompt" ]; then
     opencmd+=(--prompt "$prompt")
 fi
@@ -71,8 +71,12 @@ if [ -n "$prompt" ]; then
         for _ in $(seq 1 30); do
             if curl -s "http://localhost:$port/config" > /dev/null 2>&1; then
                 sleep 2  # Give opencode time to fully render
-                curl -s -X POST "http://localhost:$port/tui/submit-prompt" \
-                    -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+                if [ -n "$TMUX_PANE" ]; then
+                    tmux send-keys -t "$TMUX_PANE" Enter
+                else
+                    curl -s -X POST "http://localhost:$port/tui/submit-prompt" \
+                        -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+                fi
                 break
             fi
             sleep 0.5
