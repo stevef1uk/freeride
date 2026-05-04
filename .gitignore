@@ -25,6 +25,17 @@ defender/
 events/
 doctor_output.txt
 out.txt
+AGENTS.md
+CLAUDE.md
+mayor/
+settings/
+witness/
+refinery/
+plugins/
+crew/
+polecats/
+tmp/
+logs/
 
 # Beads / Dolt files (added by bd init)
 .dolt/
