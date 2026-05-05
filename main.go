@@ -44,6 +44,7 @@ type ideModel struct {
 type modelsConfig struct {
 	ReliableFree   []string   `yaml:"reliableFree"`
 	NvidiaReliable []string   `yaml:"nvidiaReliable"`
+	NvidiaComplex  []string   `yaml:"nvidiaComplex"`
 	CuratedPaid    []string   `yaml:"curatedPaid"`
 	ExcludeModels  []string   `yaml:"excludeModels"`
 	IdeModels      []ideModel `yaml:"ideModels"`
@@ -543,19 +544,55 @@ func isComplex(body map[string]interface{}) bool {
 	if body == nil {
 		return false
 	}
-	// 1. Presence of tools
+
+	// 1. Presence of tools (agent work always uses tools)
 	if tools, ok := body["tools"].([]interface{}); ok && len(tools) > 0 {
 		log.Printf("[DEBUG] Request classified as COMPLEX: Tools present (%d)", len(tools))
 		return true
 	}
 
-	// 2. Large number of messages (long context)
+	// 2. Large number of messages (long context / multi-turn reasoning)
 	if msgs, ok := body["messages"].([]interface{}); ok && len(msgs) > 30 {
 		log.Printf("[DEBUG] Request classified as COMPLEX: Many messages (%d)", len(msgs))
 		return true
 	}
 
-	// 3. User specifically asked for a high-tier model without :free suffix
+	// 3. Analyze message content for complex agent work patterns
+	complexityIndicators := []string{
+		"spec", "specification", "spec.md",
+		"mountain", "sling",
+		"multi-step", "multistep",
+		"convoy", "bead", "beads",
+		"patrol", "witness", "deacon", "mayor", "polecat", "refinery",
+		"task create", "task add", "extract tasks",
+		"dag", "dependency", "dependencies",
+		"rig", "crew",
+	}
+
+	if msgs, ok := body["messages"].([]interface{}); ok {
+		totalContentLen := 0
+		for _, m := range msgs {
+			if mMap, ok := m.(map[string]interface{}); ok {
+				if content, ok := mMap["content"].(string); ok {
+					totalContentLen += len(content)
+					lowerContent := strings.ToLower(content)
+					for _, indicator := range complexityIndicators {
+						if strings.Contains(lowerContent, indicator) {
+							log.Printf("[DEBUG] Request classified as COMPLEX: Content contains '%s'", indicator)
+							return true
+						}
+					}
+				}
+			}
+		}
+		// Large total payload (>15KB) indicates complex work (e.g. SPEC.md)
+		if totalContentLen > 15000 {
+			log.Printf("[DEBUG] Request classified as COMPLEX: Large payload (%d bytes)", totalContentLen)
+			return true
+		}
+	}
+
+	// 4. User specifically asked for a high-tier model without :free suffix
 	if model, ok := body["model"].(string); ok {
 		lowerModel := strings.ToLower(model)
 		if (strings.Contains(lowerModel, "sonnet") || strings.Contains(lowerModel, "gpt-4o") || strings.Contains(lowerModel, "opus") || strings.Contains(lowerModel, "o1-")) && !strings.Contains(lowerModel, ":free") {
@@ -629,7 +666,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	isComplexRequest := isComplex(bodyMap)
 
 	// Tier 1: Original requested model (if Free)
+	// For complex requests, if the original model is a weak/small model (e.g. 11B),
+	// we deprioritize it in favor of nvidiaComplex models.
 	isOriginalFree := false
+	isOriginalWeak := false
 	if originalModel != "" {
 		if !isCooldown(originalModel) {
 			for _, m := range models {
@@ -646,13 +686,39 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			// Detect weak models: small parameter counts (1B, 3B, 7B, 8B, 11B, 12B)
+			lowerOrig := strings.ToLower(originalModel)
+			isOriginalWeak = strings.Contains(lowerOrig, "-1b-") ||
+				strings.Contains(lowerOrig, "-3b-") ||
+				strings.Contains(lowerOrig, "-7b-") ||
+				strings.Contains(lowerOrig, "-8b-") ||
+				strings.Contains(lowerOrig, "-11b-") ||
+				strings.Contains(lowerOrig, "-12b-") ||
+				strings.Contains(lowerOrig, "nano") ||
+				strings.Contains(lowerOrig, "mini")
+
 			if isOriginalFree && !isExcluded(originalModel) {
-				candidates = append(candidates, originalModel)
+				if !isComplexRequest || !isOriginalWeak {
+					candidates = append(candidates, originalModel)
+				}
 			}
 		}
 	}
 
-	// Tier 2: Free tool-capable NVIDIA models (Gauranteed Free)
+	// Tier 2: Complex-task NVIDIA models (tried FIRST for complex requests)
+	// These are the most powerful free models - 70B+ parameter models.
+	if isComplexRequest {
+		for _, nid := range conf.NvidiaComplex {
+			if nid == originalModel {
+				continue
+			}
+			if !isCooldown(nid) && !isExcluded(nid) {
+				candidates = append(candidates, nid)
+			}
+		}
+	}
+
+	// Tier 2.5: Free tool-capable NVIDIA models from live API
 	for _, m := range nvidiaModels {
 		if m.ID == originalModel {
 			continue
@@ -662,13 +728,30 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Tier 2.5: Specifically reliable NVIDIA models from config
-	if isComplexRequest {
-		for _, nid := range conf.NvidiaReliable {
-			if !isCooldown(nid) && !isExcluded(nid) {
-				candidates = append(candidates, nid)
+	// Tier 2.6: Reliable NVIDIA models from config (for both simple and complex)
+	for _, nid := range conf.NvidiaReliable {
+		if nid == originalModel {
+			continue
+		}
+		// Skip if already added via nvidiaComplex
+		already := false
+		for _, c := range candidates {
+			if c == nid {
+				already = true
+				break
 			}
 		}
+		if already {
+			continue
+		}
+		if !isCooldown(nid) && !isExcluded(nid) {
+			candidates = append(candidates, nid)
+		}
+	}
+
+	// For complex requests with weak original models, add the original back as final fallback
+	if isComplexRequest && isOriginalWeak && isOriginalFree && originalModel != "" && !isExcluded(originalModel) && !isCooldown(originalModel) {
+		candidates = append(candidates, originalModel)
 	}
 
 	// Tier 3: Specific Reliable Free OpenRouter models from config

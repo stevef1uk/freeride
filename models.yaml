@@ -7,9 +7,16 @@ reliableFree:
   - "meta-llama/llama-3.3-70b-instruct:free"
 
 # Priority 2: Reliable NVIDIA models (zero-cost, high performance)
+# For complex agent tasks (multi-step reasoning, tool use), prefer 70B models.
+# For simple tasks, 11B is faster and cheaper.
 nvidiaReliable:
   - "meta/llama-3.3-70b-instruct"
   - "meta/llama-3.2-11b-vision-instruct"
+
+# Priority 2.5: Complex-task NVIDIA models (always tried first for complex requests)
+# These are only used when isComplex() detects tools, long context, or agent workflows.
+nvidiaComplex:
+  - "meta/llama-3.3-70b-instruct"
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
