@@ -368,7 +368,8 @@ func TestModelDiscoveryAndUsage(t *testing.T) {
 
 	foundOpenRouter := false
 	foundNvidia := false
-	var orModel, nvModel string
+	foundOllama := false
+	var orModel, nvModel, ollamaModel string
 
 	for _, m := range data.Models {
 		if !foundOpenRouter && (strings.HasPrefix(m.Name, "google/") || strings.HasPrefix(m.Name, "meta/") || strings.HasPrefix(m.Name, "anthropic/")) {
@@ -379,6 +380,10 @@ func TestModelDiscoveryAndUsage(t *testing.T) {
 			// Choose a non-super model for faster testing
 			foundNvidia = true
 			nvModel = m.Name
+		}
+		if !foundOllama && strings.HasPrefix(m.Name, "ollama/") {
+			foundOllama = true
+			ollamaModel = m.Name
 		}
 	}
 
@@ -394,6 +399,13 @@ func TestModelDiscoveryAndUsage(t *testing.T) {
 	} else {
 		t.Logf("Testing NVIDIA model: %s", nvModel)
 		testCompletion(t, nvModel)
+	}
+
+	if !foundOllama {
+		t.Error("Ollama Cloud models not found in discovery list")
+	} else {
+		t.Logf("Testing Ollama model: %s", ollamaModel)
+		testCompletion(t, ollamaModel)
 	}
 }
 

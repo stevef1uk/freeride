@@ -130,6 +130,7 @@ type ollamaTagsResponse struct {
 var (
 	cachedFreeModels   []openRouterModel
 	cachedNvidiaModels []nvidiaModel
+	cachedOllamaModels []ollamaModel
 	cacheMutex         sync.RWMutex
 	cacheTime          time.Time
 	cacheTTL           = 1 * time.Hour
@@ -383,6 +384,50 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 	return freeModels, nil
 }
 
+func fetchOllamaCloudModels() ([]ollamaModel, error) {
+	cacheMutex.RLock()
+	if time.Since(cacheTime) < cacheTTL && len(cachedOllamaModels) > 0 {
+		models := cachedOllamaModels
+		cacheMutex.RUnlock()
+		return models, nil
+	}
+	cacheMutex.RUnlock()
+
+	apiKey := os.Getenv("OLLAMA_API_KEY")
+	if apiKey == "" {
+		log.Printf("[DEBUG] OLLAMA_API_KEY not set, skipping Ollama Cloud models")
+		return nil, nil
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), "GET", "https://ollama.com/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Ollama API returned status %d", resp.StatusCode)
+	}
+
+	var wrapper ollamaTagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, err
+	}
+
+	cacheMutex.Lock()
+	cachedOllamaModels = wrapper.Models
+	cacheMutex.Unlock()
+
+	log.Printf("[DEBUG] Fetched %d Ollama Cloud models", len(wrapper.Models))
+	return wrapper.Models, nil
+}
+
 func scoreModel(m openRouterModel) float64 {
 	score := 0.0
 
@@ -448,6 +493,7 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nvidiaModels, _ := fetchNvidiaFreeModels()
+	ollamaModelsList, _ := fetchOllamaCloudModels()
 
 	var ollamaModels []ollamaModel
 	for _, m := range models {
@@ -486,6 +532,25 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 				Families:          []string{"nvidia"},
 				ParameterSize:     "unknown",
 				QuantizationLevel: "none",
+			},
+		})
+	}
+
+	// Add Ollama Cloud models to discovery
+	for _, m := range ollamaModelsList {
+		modelName := "ollama/" + m.Name
+		ollamaModels = append(ollamaModels, ollamaModel{
+			Name:       modelName,
+			Model:      modelName,
+			ModifiedAt: m.ModifiedAt,
+			Size:       m.Size,
+			Digest:     m.Digest,
+			Details: ollamaModelDetails{
+				Format:            m.Details.Format,
+				Family:            "ollama-cloud",
+				Families:          []string{"ollama-cloud"},
+				ParameterSize:     m.Details.ParameterSize,
+				QuantizationLevel: m.Details.QuantizationLevel,
 			},
 		})
 	}
@@ -656,6 +721,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	models, _ := fetchFreeModels()
 	nvidiaModels, _ := fetchNvidiaFreeModels()
+	ollamaModels, _ := fetchOllamaCloudModels()
 
 	// Build candidates list from BOTH OpenRouter AND NVIDIA free models
 	var candidates []string
@@ -681,6 +747,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if !isOriginalFree {
 				for _, m := range nvidiaModels {
 					if m.ID == originalModel {
+						isOriginalFree = true
+						break
+					}
+				}
+			}
+			if !isOriginalFree {
+				for _, m := range ollamaModels {
+					if "ollama/"+m.Name == originalModel {
 						isOriginalFree = true
 						break
 					}
@@ -893,6 +967,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			strings.HasPrefix(candidate, "01-ai/") ||
 			strings.HasPrefix(candidate, "deepseek/")
 
+		isOllama := strings.HasPrefix(candidate, "ollama/")
+
 		isIDE := false
 		for _, m := range conf.IdeModels {
 			if m.ID == candidate {
@@ -908,6 +984,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else if isNvidia {
 			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 			apiKey = os.Getenv("NVIDIA_API_KEY")
+		} else if isOllama {
+			targetURL = "https://ollama.com/v1/chat/completions"
+			apiKey = os.Getenv("OLLAMA_API_KEY")
 		} else {
 			targetURL = "https://openrouter.ai/api/v1/chat/completions"
 			apiKey = os.Getenv("OPENROUTER_API_KEY")
@@ -940,6 +1019,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			currentBody["model"] = candidate
 			// Strip :free suffix (provider doesn't use it)
 			currentBody["model"] = strings.TrimSuffix(candidate, ":free")
+			// Strip ollama/ prefix
+			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "ollama/")
 
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)

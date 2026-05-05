@@ -5,6 +5,8 @@ reliableFree:
   - "openai/gpt-4o-mini"
   - "google/gemini-2.0-flash-001"
   - "meta-llama/llama-3.3-70b-instruct:free"
+  - "ollama/qwen3-coder:480b"
+  - "ollama/deepseek-v4-pro"
 
 # Priority 2: Reliable NVIDIA models (zero-cost, high performance)
 # For complex agent tasks (multi-step reasoning, tool use), prefer 70B models.
@@ -17,6 +19,8 @@ nvidiaReliable:
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
   - "meta/llama-3.3-70b-instruct"
+  - "ollama/deepseek-v4-pro"
+  - "ollama/qwen3.5:397b"
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:

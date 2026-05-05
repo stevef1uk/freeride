@@ -1,6 +1,6 @@
 # Freeride Proxy (v1.2.0)
 
-A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from both **OpenRouter** and **NVIDIA (NIM)**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
+A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
 
 Use it **standalone** with any OpenAI-compatible client, or as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration.
 
@@ -16,6 +16,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
   - **Tier 1**: Prioritizes the original requested model if confirmed free.
   - **Tier 2**: Falls back to tool-capable NVIDIA NIM models (highly reliable and fast).
   - **Tier 3**: Falls back to reliable OpenRouter free models.
+  - **Tier 4**: Accesses high-end cloud models via **Ollama Cloud** (using the `ollama/` prefix).
 
 ---
 
@@ -24,6 +25,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 - Go 1.18+ (for building from source)
 - An **OpenRouter API key** (for free OpenRouter models)
 - An **NVIDIA API key** (for highest-performance free NIM models)
+- An **Ollama API key** (for Ollama Cloud models like Qwen3 480B and DeepSeek V4)
 
 ## Building and Running
 
@@ -38,6 +40,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
    ```env
    OPENROUTER_API_KEY=sk-or-v1-...
    NVIDIA_API_KEY=nvapi-...
+   OLLAMA_API_KEY=1b18...
    ```
 
 3. Run:
@@ -243,8 +246,10 @@ excludeModels:
 **Verified working models (NVIDIA):**
 - `meta/llama-3.3-70b-instruct` ✅
 - `meta/llama-3.2-11b-vision-instruct` ✅
+- `ollama/qwen3-coder:480b` ✅
+- `ollama/deepseek-v4-pro` ✅
 
-The proxy auto-discovers models from both OpenRouter and NVIDIA, but `models.yaml` prioritizes the listed models.
+The proxy auto-discovers models from OpenRouter, NVIDIA, and Ollama Cloud, but `models.yaml` prioritizes the listed models.
 
 ---
 
