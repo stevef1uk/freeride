@@ -394,12 +394,43 @@ func fetchOllamaCloudModels() ([]ollamaModel, error) {
 	cacheMutex.RUnlock()
 
 	apiKey := os.Getenv("OLLAMA_API_KEY")
-	if apiKey == "" {
-		log.Printf("[DEBUG] OLLAMA_API_KEY not set, skipping Ollama Cloud models")
-		return nil, nil
-	}
-
 	host := os.Getenv("OLLAMA_API_URL")
+	myPort := os.Getenv("PORT")
+	isLoop := host == "" && (myPort == "" || myPort == "11434")
+
+	if apiKey == "" || isLoop {
+		if apiKey == "" {
+			log.Printf("[DEBUG] OLLAMA_API_KEY not set, returning fallback models")
+		} else {
+			log.Printf("[DEBUG] OLLAMA_API_URL not set and we are on 11434, returning fallback models to avoid infinite recursion")
+		}
+		return []ollamaModel{
+			{
+				Name:  "llama3.3",
+				Model: "llama3.3",
+				Size:  5000000000,
+				Details: ollamaModelDetails{
+					Format:            "gguf",
+					Family:            "llama",
+					Families:          []string{"llama"},
+					ParameterSize:     "70b",
+					QuantizationLevel: "Q4_K_M",
+				},
+			},
+			{
+				Name:  "phi3:mini",
+				Model: "phi3:mini",
+				Size:  2000000000,
+				Details: ollamaModelDetails{
+					Format:            "gguf",
+					Family:            "phi3",
+					Families:          []string{"phi3"},
+					ParameterSize:     "3.8b",
+					QuantizationLevel: "Q4_K_M",
+				},
+			},
+		}, nil
+	}
 	if host == "" {
 		host = "http://localhost:11434"
 	}
@@ -559,6 +590,23 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
+
+	// Add models from models.yaml to discovery if they start with ollama/
+	configMutex.RLock()
+	for _, m := range globalModelsConfig.ReliableFree {
+		if strings.HasPrefix(m, "ollama/") {
+			ollamaModels = append(ollamaModels, ollamaModel{
+				Name:  m,
+				Model: m,
+				Details: ollamaModelDetails{
+					Format:   "gguf",
+					Family:   "ollama-cloud",
+					Families: []string{"ollama-cloud"},
+				},
+			})
+		}
+	}
+	configMutex.RUnlock()
 
 	resp := ollamaTagsResponse{Models: ollamaModels}
 	w.Header().Set("Content-Type", "application/json")
@@ -1007,6 +1055,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else if isOllama {
 			host := os.Getenv("OLLAMA_API_URL")
 			if host == "" {
+				myPort := os.Getenv("PORT")
+				if myPort == "" || myPort == "11434" {
+					log.Printf("[DEBUG] OLLAMA_API_URL not set and we are on 11434, skipping Ollama routing to avoid infinite recursion")
+					continue
+				}
 				host = "http://localhost:11434"
 			}
 			targetURL = strings.TrimSuffix(host, "/") + "/v1/chat/completions"
@@ -1079,7 +1132,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		// Use an independent context with a generous timeout so client disconnects
 		// (e.g. opencode timeout) don't immediately abort the upstream request.
-		upCtx, upCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		upCtx, upCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)
