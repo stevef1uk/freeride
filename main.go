@@ -729,7 +729,22 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	conf := globalModelsConfig
 	configMutex.RUnlock()
 
+	// Role-based routing detection
+	role := r.Header.Get("X-GasTown-Role")
+	if role != "" && debugMode {
+		log.Printf("[DEBUG] Role-based routing detected: %s", role)
+	}
+
 	isComplexRequest := isComplex(bodyMap)
+	if role == "polecat" {
+		isComplexRequest = true // Treat all polecat requests as complex
+	}
+
+	// Tier 0.5: Role-based overrides
+	if role == "polecat" && allowPaid {
+		// Polecats need the best - prioritize Claude 3.5 Sonnet
+		candidates = append(candidates, "anthropic/claude-3.5-sonnet")
+	}
 
 	// Tier 1: Original requested model (if Free)
 	// For complex requests, if the original model is a weak/small model (e.g. 11B),
