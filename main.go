@@ -399,7 +399,12 @@ func fetchOllamaCloudModels() ([]ollamaModel, error) {
 		return nil, nil
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", "https://ollama.com/api/tags", nil)
+	host := os.Getenv("OLLAMA_API_URL")
+	if host == "" {
+		host = "http://localhost:11434"
+	}
+	url := strings.TrimSuffix(host, "/") + "/api/tags"
+	req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1000,7 +1005,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 			apiKey = os.Getenv("NVIDIA_API_KEY")
 		} else if isOllama {
-			targetURL = "https://ollama.com/v1/chat/completions"
+			host := os.Getenv("OLLAMA_API_URL")
+			if host == "" {
+				host = "http://localhost:11434"
+			}
+			targetURL = strings.TrimSuffix(host, "/") + "/v1/chat/completions"
 			apiKey = os.Getenv("OLLAMA_API_KEY")
 		} else {
 			targetURL = "https://openrouter.ai/api/v1/chat/completions"
