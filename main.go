@@ -840,7 +840,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				strings.Contains(lowerOrig, "mini")
 
 			if isOriginalFree && !isExcluded(originalModel) {
-				if !isComplexRequest || !isOriginalWeak {
+				if !isComplexRequest || !isOriginalWeak || role == "witness" || role == "deacon" {
 					candidates = append(candidates, originalModel)
 				}
 			}
