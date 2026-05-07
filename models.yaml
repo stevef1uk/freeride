@@ -2,11 +2,9 @@
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
-  - "openai/gpt-4o-mini"
-  - "google/gemini-2.0-flash-001"
+  - "nousresearch/hermes-3-llama-3.1-405b:free"
+  - "qwen/qwen3-coder:free"
   - "meta-llama/llama-3.3-70b-instruct:free"
-  - "ollama/qwen3-coder:480b"
-  - "ollama/deepseek-v4-pro"
 
 # Priority 2: Reliable NVIDIA models (zero-cost, high performance)
 # For complex agent tasks (multi-step reasoning, tool use), prefer 70B models.
@@ -19,17 +17,13 @@ nvidiaReliable:
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
   - "meta/llama-3.3-70b-instruct"
-  - "ollama/deepseek-v4-pro"
-  - "ollama/qwen3.5:397b"
+  - "nvidia/llama-3.1-nemotron-70b-instruct"
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
   - "google/gemma-4-26b-a4b-it:free"      # Currently broken 401
-  - "google/gemini-2.0-flash-exp:free"    # 404 Not Found
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
-  - "anthropic/claude-3.5-sonnet"         # 404 Not Found on OpenRouter
-  - "meta-llama/llama-3.3-70b-instruct:free"  # 429 Rate Limited
 
 # Priority 3: Local IDE Models (Opt-in via --allow-ide)
 ideModels:

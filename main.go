@@ -847,8 +847,23 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Tier 2: Complex-task NVIDIA models (tried FIRST for complex requests)
-	// These are the most powerful free models - 70B+ parameter models.
+	// Tier 1.5: Reliable Free OpenRouter models (tried FIRST for complex requests)
+	if isComplexRequest {
+		for _, fid := range conf.ReliableFree {
+			if fid == originalModel {
+				continue
+			}
+			// Mayor and Architect need high reasoning - deprioritize mini models
+			if (role == "mayor" || role == "architect") && strings.Contains(fid, "mini") {
+				continue
+			}
+			if !isCooldown(fid) && !isExcluded(fid) {
+				candidates = append(candidates, fid)
+			}
+		}
+	}
+
+	// Tier 2: Complex-task NVIDIA models
 	if isComplexRequest {
 		for _, nid := range conf.NvidiaComplex {
 			if nid == originalModel {
@@ -870,12 +885,43 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Tier 2.6: Reliable NVIDIA models from config (for both simple and complex)
+	// Tier 2.6: Reliable Free OpenRouter models from config (try these before small NVIDIA models)
+	for _, fid := range conf.ReliableFree {
+		if fid == originalModel {
+			continue
+		}
+		// Skip if already in candidates
+		already := false
+		for _, c := range candidates {
+			if c == fid {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+
+		if !isCooldown(fid) {
+			found := false
+			for _, m := range models {
+				if m.ID == fid {
+					found = true
+					break
+				}
+			}
+			if found {
+				candidates = append(candidates, fid)
+			}
+		}
+	}
+
+	// Tier 2.7: Reliable NVIDIA models from config (for both simple and complex)
 	for _, nid := range conf.NvidiaReliable {
 		if nid == originalModel {
 			continue
 		}
-		// Skip if already added via nvidiaComplex
+		// Skip if already added
 		already := false
 		for _, c := range candidates {
 			if c == nid {
