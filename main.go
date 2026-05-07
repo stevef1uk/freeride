@@ -1057,10 +1057,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if host == "" {
 				myPort := os.Getenv("PORT")
 				if myPort == "" || myPort == "11434" {
-					log.Printf("[DEBUG] OLLAMA_API_URL not set and we are on 11434, skipping Ollama routing to avoid infinite recursion")
-					continue
+					if os.Getenv("OLLAMA_API_KEY") != "" {
+						host = "https://api.ollama.com"
+					} else {
+						log.Printf("[DEBUG] OLLAMA_API_URL not set and we are on 11434, skipping Ollama routing to avoid infinite recursion")
+						continue
+					}
+				} else {
+					host = "http://localhost:11434"
 				}
-				host = "http://localhost:11434"
 			}
 			targetURL = strings.TrimSuffix(host, "/") + "/v1/chat/completions"
 			apiKey = os.Getenv("OLLAMA_API_KEY")
