@@ -308,10 +308,6 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("NVIDIA API returned status %d", resp.StatusCode)
@@ -396,44 +392,16 @@ func fetchOllamaCloudModels() ([]ollamaModel, error) {
 	apiKey := os.Getenv("OLLAMA_API_KEY")
 	host := os.Getenv("OLLAMA_API_URL")
 	myPort := os.Getenv("PORT")
-	isLoop := host == "" && (myPort == "" || myPort == "11434")
+	isLocalLoop := host == "" && (myPort == "" || myPort == "11434")
 
-	if apiKey == "" || isLoop {
-		if apiKey == "" {
-			log.Printf("[DEBUG] OLLAMA_API_KEY not set, returning fallback models")
-		} else {
-			log.Printf("[DEBUG] OLLAMA_API_URL not set and we are on 11434, returning fallback models to avoid infinite recursion")
-		}
-		return []ollamaModel{
-			{
-				Name:  "llama3.3",
-				Model: "llama3.3",
-				Size:  5000000000,
-				Details: ollamaModelDetails{
-					Format:            "gguf",
-					Family:            "llama",
-					Families:          []string{"llama"},
-					ParameterSize:     "70b",
-					QuantizationLevel: "Q4_K_M",
-				},
-			},
-			{
-				Name:  "phi3:mini",
-				Model: "phi3:mini",
-				Size:  2000000000,
-				Details: ollamaModelDetails{
-					Format:            "gguf",
-					Family:            "phi3",
-					Families:          []string{"phi3"},
-					ParameterSize:     "3.8b",
-					QuantizationLevel: "Q4_K_M",
-				},
-			},
-		}, nil
-	}
 	if host == "" {
-		host = "http://localhost:11434"
+		if isLocalLoop && apiKey != "" {
+			host = "https://ollama.com"
+		} else {
+			host = "http://localhost:11434"
+		}
 	}
+	log.Printf("[DEBUG] Fetching Ollama models from %s (key set: %v)", host, apiKey != "")
 	url := strings.TrimSuffix(host, "/") + "/api/tags"
 	req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
 	if err != nil {
@@ -461,6 +429,9 @@ func fetchOllamaCloudModels() ([]ollamaModel, error) {
 	cacheMutex.Unlock()
 
 	log.Printf("[DEBUG] Fetched %d Ollama Cloud models", len(wrapper.Models))
+	for _, m := range wrapper.Models {
+		log.Printf("[DEBUG] Ollama Cloud Model: %s", m.Name)
+	}
 	return wrapper.Models, nil
 }
 
@@ -799,6 +770,39 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		candidates = append(candidates, "anthropic/claude-3.5-sonnet")
 	}
 
+	// Tier 0.6: Reliable Models (Always preferred for Gas Town)
+	if role != "" {
+		// Prioritize massive Ollama Cloud models first
+		for _, m := range ollamaModels {
+			modelName := "ollama/" + m.Name
+			isMassive := strings.Contains(m.Name, "671b") || 
+						 strings.Contains(m.Name, "397b") || 
+						 strings.Contains(m.Name, "1t") ||
+						 strings.Contains(m.Name, "120b") ||
+						 strings.Contains(m.Name, "large") ||
+						 strings.Contains(m.Name, "480b") ||
+						 strings.Contains(m.Name, "405b") ||
+						 strings.Contains(m.Name, "90b") ||
+						 strings.Contains(m.Name, "80b") ||
+						 strings.Contains(m.Name, "70b")
+			if isMassive && !isCooldown(modelName) && !isExcluded(modelName) {
+				candidates = append(candidates, modelName)
+			}
+		}
+		// Then reliable free models from config
+		for _, fid := range conf.ReliableFree {
+			if !isCooldown(fid) && !isExcluded(fid) {
+				candidates = append(candidates, fid)
+			}
+		}
+		// Then reliable NVIDIA models
+		for _, nid := range conf.NvidiaReliable {
+			if !isCooldown(nid) && !isExcluded(nid) {
+				candidates = append(candidates, nid)
+			}
+		}
+	}
+
 	// Tier 1: Original requested model (if Free)
 	// For complex requests, if the original model is a weak/small model (e.g. 11B),
 	// we deprioritize it in favor of nvidiaComplex models.
@@ -1102,15 +1106,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			host := os.Getenv("OLLAMA_API_URL")
 			if host == "" {
 				myPort := os.Getenv("PORT")
-				if myPort == "" || myPort == "11434" {
-					if os.Getenv("OLLAMA_API_KEY") != "" {
-						host = "https://api.ollama.com"
-					} else {
-						log.Printf("[DEBUG] OLLAMA_API_URL not set and we are on 11434, skipping Ollama routing to avoid infinite recursion")
-						continue
-					}
-				} else {
+				apiKey := os.Getenv("OLLAMA_API_KEY")
+				if (myPort == "" || myPort == "11434") && apiKey != "" {
+					// Use cloud if we have a key, even on 11434
+					host = "https://ollama.com"
+				} else if myPort != "" && myPort != "11434" {
 					host = "http://localhost:11434"
+				} else if apiKey == "" {
+					log.Printf("[DEBUG] OLLAMA_API_URL not set, no key, and we are on 11434, skipping Ollama to avoid loop")
+					continue
 				}
 			}
 			targetURL = strings.TrimSuffix(host, "/") + "/v1/chat/completions"
@@ -1229,7 +1233,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			resp.Body.Close()
 
 			// Fallback on Bad Request (400), Unauthorized (401), Payment required (402), Rate Limit (429) or Server Errors (5xx)
-			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 404 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			if resp.StatusCode == 400 || resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 403 || resp.StatusCode == 404 || resp.StatusCode == 429 || resp.StatusCode >= 500 {
 				bodyStr := string(errorBody)
 				// Don't cooldown on client-caused errors (like context length)
 				isContextError := strings.Contains(bodyStr, "context length") ||
@@ -1803,6 +1807,20 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 			OwnedBy:     "nvidia",
 		})
 	}
+
+	// Add Ollama models
+	ollamaModels, _ := fetchOllamaCloudModels()
+	for _, m := range ollamaModels {
+		res.Data = append(res.Data, openAIModel{
+			ID:          "ollama/" + m.Name,
+			Type:        "model",
+			Object:      "model",
+			DisplayName: m.Name,
+			Created:     time.Now().Unix(),
+			OwnedBy:     "ollama-cloud",
+		})
+	}
+
 	json.NewEncoder(w).Encode(res)
 }
 

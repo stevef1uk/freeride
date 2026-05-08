@@ -17,13 +17,21 @@ nvidiaReliable:
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
   - "meta/llama-3.3-70b-instruct"
-  - "nvidia/llama-3.1-nemotron-70b-instruct"
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
   - "google/gemma-4-26b-a4b-it:free"      # Currently broken 401
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
+  - "meta-llama/llama-3.2-1b-instruct:free" # TOO SMALL - Hallucinates
+  - "meta-llama/llama-3.2-3b-instruct:free" # TOO SMALL - Hallucinates
+  - "meta-llama/llama-3.2-1b-instruct"      # TOO SMALL
+  - "meta-llama/llama-3.2-3b-instruct"      # TOO SMALL
+
+# Priority 0: Local Reliable Models (Always preferred)
+localReliable:
+  - "ollama/llama3.3"
+  - "ollama/llama3.2:latest"
 
 # Priority 3: Local IDE Models (Opt-in via --allow-ide)
 ideModels:

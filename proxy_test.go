@@ -607,3 +607,51 @@ func TestConversationalToolExtraction(t *testing.T) {
 		t.Errorf("Expected command 'bd list', got '%v'", input2["command"])
 	}
 }
+func TestRoleBasedPrioritization(t *testing.T) {
+	// Test that providing a Gas Town role prioritizes massive models
+	payload := map[string]interface{}{
+		"model": "openrouter",
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "Hello"},
+		},
+		"max_tokens": 10,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest("POST", proxyURL+"/v1/chat/completions", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GasTown-Role", "architect")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errorBody, _ := ioutil.ReadAll(resp.Body)
+		t.Fatalf("Request failed with status %d: %s", resp.StatusCode, string(errorBody))
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	
+	modelUsed, _ := result["model"].(string)
+	t.Logf("Role 'architect' used model: %s", modelUsed)
+
+	isMassive := strings.Contains(modelUsed, "671b") || 
+				 strings.Contains(modelUsed, "397b") || 
+				 strings.Contains(modelUsed, "1t") ||
+				 strings.Contains(modelUsed, "large") ||
+				 strings.Contains(modelUsed, "405b") ||
+				 strings.Contains(modelUsed, "70b") ||
+				 strings.Contains(modelUsed, "80b") ||
+				 strings.Contains(modelUsed, "90b")
+
+	if !isMassive {
+		t.Errorf("Expected massive model for role 'architect', but got %s", modelUsed)
+	}
+}
