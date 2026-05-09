@@ -88,8 +88,9 @@ func loadModelsConfig() {
 func isExcluded(model string) bool {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
+	lowerModel := strings.ToLower(model)
 	for _, m := range globalModelsConfig.ExcludeModels {
-		if m == model {
+		if strings.ToLower(m) == lowerModel {
 			return true
 		}
 	}
@@ -356,7 +357,7 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 		// Nemotron and newerLlama models generally support tools
 		m.SupportsTools = strings.Contains(lowerID, "nemotron") ||
 			strings.Contains(lowerID, "llama-3.3") ||
-			strings.Contains(lowerID, "llama-3.2") ||
+			(strings.Contains(lowerID, "llama-3.2") && strings.Contains(lowerID, "70b")) ||
 			strings.Contains(lowerID, "deepseek") ||
 			strings.Contains(lowerID, "qwen2.5") ||
 			strings.Contains(lowerID, "qwen3")
@@ -844,7 +845,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				strings.Contains(lowerOrig, "mini")
 
 			if isOriginalFree && !isExcluded(originalModel) {
-				if !isComplexRequest || !isOriginalWeak || role == "witness" || role == "deacon" {
+				if !isComplexRequest || !isOriginalWeak {
 					candidates = append(candidates, originalModel)
 				}
 			}

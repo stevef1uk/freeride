@@ -11,12 +11,16 @@ reliableFree:
 # For simple tasks, 11B is faster and cheaper.
 nvidiaReliable:
   - "meta/llama-3.3-70b-instruct"
+  - "nvidia/llama-3.1-nemotron-70b-instruct"
+  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"
   - "meta/llama-3.2-11b-vision-instruct"
 
 # Priority 2.5: Complex-task NVIDIA models (always tried first for complex requests)
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
   - "meta/llama-3.3-70b-instruct"
+  - "nvidia/llama-3.1-nemotron-70b-instruct"
+  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
@@ -27,6 +31,12 @@ excludeModels:
   - "meta-llama/llama-3.2-3b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-1b-instruct"      # TOO SMALL
   - "meta-llama/llama-3.2-3b-instruct"      # TOO SMALL
+  - "meta/llama-3.2-1b-instruct"            # NVIDIA VERSION - TOO SMALL
+  - "meta/llama-3.2-3b-instruct"            # NVIDIA VERSION - TOO SMALL
+  - "nvidia/llama-3.1-nemotron-nano-8b-v1"  # TOO SMALL
+  - "nvidia/llama-3.1-nemotron-nano-vl-8b-v1" # TOO SMALL
+  - "nvidia/nemotron-nano-12b-v2-vl"         # TOO SMALL
+  - "nvidia/nemotron-mini-4b-instruct"      # TOO SMALL
 
 # Priority 0: Local Reliable Models (Always preferred)
 localReliable:
