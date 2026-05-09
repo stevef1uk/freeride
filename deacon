@@ -1,8 +1,0 @@
-Script started on 2026-05-08 10:05:23+02:00 [COMMAND="/home/stevef/.local/bin/gt-agent" <not executed on terminal>]
-[gt-agent] Starting as worker
-[gt-agent] Using gt binary: /home/stevef/.local/bin/gt
-[gt-agent] PATH: /home/stevef/.local/bin:/home/stevef/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/sbin
-[gt-agent] State loaded: patrol_count=5177 idle_cycles=0
-[gt-agent] No work (idle_cycle=1), sleeping 1m0s
-
-Script done on 2026-05-08 10:05:45+02:00 [COMMAND_EXIT_CODE="0"]
