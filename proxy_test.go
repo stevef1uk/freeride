@@ -641,15 +641,17 @@ func TestRoleBasedPrioritization(t *testing.T) {
 	
 	modelUsed, _ := result["model"].(string)
 	t.Logf("Role 'architect' used model: %s", modelUsed)
-
 	isMassive := strings.Contains(modelUsed, "671b") || 
 				 strings.Contains(modelUsed, "397b") || 
 				 strings.Contains(modelUsed, "1t") ||
+				 strings.Contains(modelUsed, "120b") ||
 				 strings.Contains(modelUsed, "large") ||
+				 strings.Contains(modelUsed, "480b") ||
 				 strings.Contains(modelUsed, "405b") ||
 				 strings.Contains(modelUsed, "70b") ||
 				 strings.Contains(modelUsed, "80b") ||
 				 strings.Contains(modelUsed, "90b")
+
 
 	if !isMassive {
 		t.Errorf("Expected massive model for role 'architect', but got %s", modelUsed)

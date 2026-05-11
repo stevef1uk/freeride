@@ -270,6 +270,7 @@ func fetchFreeModels() ([]openRouterModel, error) {
 			if isModelFree && debugMode {
 				log.Printf("[DEBUG] OpenRouter Free Model: %s (Price: %s)", m.ID, m.Pricing.Prompt)
 			}
+			if isExcluded(m.ID) { continue }
 			freeModels = append(freeModels, m)
 		}
 	}
@@ -690,8 +691,21 @@ func isComplex(body map[string]interface{}) bool {
 			return true
 		}
 	}
-
 	return false
+}
+
+func isMassiveModel(modelName string) bool {
+	lower := strings.ToLower(modelName)
+	return strings.Contains(lower, "671b") ||
+		strings.Contains(lower, "397b") ||
+		strings.Contains(lower, "1t") ||
+		strings.Contains(lower, "120b") ||
+		strings.Contains(lower, "large") ||
+		strings.Contains(lower, "480b") ||
+		strings.Contains(lower, "405b") ||
+		strings.Contains(lower, "90b") ||
+		strings.Contains(lower, "80b") ||
+		strings.Contains(lower, "70b")
 }
 
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -776,28 +790,26 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// Prioritize massive Ollama Cloud models first
 		for _, m := range ollamaModels {
 			modelName := "ollama/" + m.Name
-			isMassive := strings.Contains(m.Name, "671b") || 
-						 strings.Contains(m.Name, "397b") || 
-						 strings.Contains(m.Name, "1t") ||
-						 strings.Contains(m.Name, "120b") ||
-						 strings.Contains(m.Name, "large") ||
-						 strings.Contains(m.Name, "480b") ||
-						 strings.Contains(m.Name, "405b") ||
-						 strings.Contains(m.Name, "90b") ||
-						 strings.Contains(m.Name, "80b") ||
-						 strings.Contains(m.Name, "70b")
-			if isMassive && !isCooldown(modelName) && !isExcluded(modelName) {
+			if isMassiveModel(modelName) && !isCooldown(modelName) && !isExcluded(modelName) {
 				candidates = append(candidates, modelName)
 			}
 		}
 		// Then reliable free models from config
 		for _, fid := range conf.ReliableFree {
+			// Architect and Mayor MUST use massive models
+			if (role == "architect" || role == "mayor") && !isMassiveModel(fid) {
+				continue
+			}
 			if !isCooldown(fid) && !isExcluded(fid) {
 				candidates = append(candidates, fid)
 			}
 		}
 		// Then reliable NVIDIA models
 		for _, nid := range conf.NvidiaReliable {
+			// Architect and Mayor MUST use massive models
+			if (role == "architect" || role == "mayor") && !isMassiveModel(nid) {
+				continue
+			}
 			if !isCooldown(nid) && !isExcluded(nid) {
 				candidates = append(candidates, nid)
 			}
@@ -1069,6 +1081,17 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+
+	if role == "architect" || role == "mayor" {
+		var massiveCandidates []string
+		for _, c := range candidates {
+			if isMassiveModel(c) {
+				massiveCandidates = append(massiveCandidates, c)
+			}
+		}
+		candidates = massiveCandidates
+	}
+
 	log.Printf("[DEBUG] Final Candidates: %v", candidates)
 
 	for i, candidate := range candidates {
@@ -1186,9 +1209,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			outboundBody = bodyBytes
 		}
 
-		// Use an independent context with a generous timeout so client disconnects
-		// (e.g. opencode timeout) don't immediately abort the upstream request.
-		upCtx, upCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		upCtx, upCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)
@@ -1514,6 +1535,13 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 	var contentPartAdded bool
 
 	scanner := bufio.NewScanner(resp.Body)
+	// Set a 30s timeout for the whole stream
+	go func() {
+		time.Sleep(30 * time.Second)
+		if fullContent == "" && !hasToolCalls {
+			resp.Body.Close()
+		}
+	}()
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" || !strings.HasPrefix(line, "data: ") {
@@ -1587,6 +1615,9 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 				}
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[ERROR] Responses SSE scanner error: %v", err)
 	}
 
 	// 3. response.content_part.done (if text was sent)
@@ -2396,6 +2427,13 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 	var emittedText string
 
 	scanner := bufio.NewScanner(resp.Body)
+	// Set a 30s timeout for the whole stream
+	go func() {
+		time.Sleep(30 * time.Second)
+		if !hasContent {
+			resp.Body.Close()
+		}
+	}()
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" || !strings.HasPrefix(line, "data: ") {
@@ -2538,6 +2576,9 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 				}
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[ERROR] Anthropic SSE scanner error: %v", err)
 	}
 
 	// Post-process: repair JSON arguments and send corrected deltas
