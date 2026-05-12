@@ -796,8 +796,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		// Then reliable free models from config
 		for _, fid := range conf.ReliableFree {
-			// Architect and Mayor MUST use massive models
-			if (role == "architect" || role == "mayor") && !isMassiveModel(fid) {
+			// Architect, Mayor, and Planner MUST use massive models
+			if (role == "architect" || role == "mayor" || role == "planner") && !isMassiveModel(fid) {
 				continue
 			}
 			if !isCooldown(fid) && !isExcluded(fid) {
@@ -806,8 +806,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		// Then reliable NVIDIA models
 		for _, nid := range conf.NvidiaReliable {
-			// Architect and Mayor MUST use massive models
-			if (role == "architect" || role == "mayor") && !isMassiveModel(nid) {
+			// Architect, Mayor, and Planner MUST use massive models
+			if (role == "architect" || role == "mayor" || role == "planner") && !isMassiveModel(nid) {
 				continue
 			}
 			if !isCooldown(nid) && !isExcluded(nid) {
