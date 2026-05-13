@@ -1,13 +1,13 @@
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
-  - "cerebras/llama3.1-8b"
-  - "cerebras/gpt-oss-120b"
-  - "cerebras/qwen-3-235b-a22b-instruct-2507"
+  - "cerebras/llama3.1-8b"                   # $0.10/1M tokens
+  - "cerebras/gpt-oss-120b"                  # Free (Preview)
+  - "cerebras/qwen-3-235b-a22b-instruct-2507" # Free (Preview)
 
 # Priority 0.5: Paid Cerebras Performance (Used for COMPLEX only)
 cerebrasPerformance:
-  - "cerebras/llama3.3-70b"
-  - "cerebras/llama3.1-70b"
+  - "cerebras/llama3.3-70b"                  # $0.85 (In) / $1.20 (Out) per 1M
+  - "cerebras/llama3.1-70b"                  # $0.60/1M tokens
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
@@ -30,6 +30,12 @@ nvidiaComplex:
   - "meta/llama-3.3-70b-instruct"
   - "nvidia/llama-3.1-nemotron-70b-instruct"
   - "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+
+# Models that should be tried even if they are paid (if --allow-paid is set)
+curatedPaid:
+  - "openai/gpt-4o-mini"                     # $0.15 (In) / $0.60 (Out) per 1M
+  - "google/gemini-2.0-flash-001"            # $0.10 (In) / $0.40 (Out) per 1M
+  - "anthropic/claude-3.5-sonnet"            # $3.00 (In) / $15.00 (Out) per 1M
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:

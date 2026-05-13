@@ -157,6 +157,21 @@ var (
 	paramRegex = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
 )
 
+type candidateContext struct {
+	originalModel    string
+	role             string
+	conf             modelsConfig
+	models           []openRouterModel
+	nvidiaModels     []nvidiaModel
+	cerebrasModels   []cerebrasModel
+	ollamaModels     []ollamaModel
+	allowPaid        bool
+	allowIDE         bool
+	isCooldown       func(string) bool
+	isExcluded       func(string) bool
+	isComplexRequest bool
+}
+
 type cooldownEntry struct {
 	ErrorCount  int       `json:"error_count"`
 	CooldownEnd time.Time `json:"cooldown_end"`
@@ -839,349 +854,53 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	cerebrasModels, _ := fetchCerebrasModels()
 	ollamaModels, _ := fetchOllamaCloudModels()
 
-	// Build candidates list from BOTH OpenRouter AND NVIDIA free models
-	var candidates []string
-	configMutex.RLock()
-	conf := globalModelsConfig
-	configMutex.RUnlock()
-
 	// Role-based routing detection
 	role := r.Header.Get("X-GasTown-Role")
 	if role != "" && debugMode {
 		log.Printf("[DEBUG] Role-based routing detected: %s", role)
 	}
 
-	isComplexRequest := isComplex(bodyMap)
+	// Build candidates list
+	configMutex.RLock()
+	conf := globalModelsConfig
+	configMutex.RUnlock()
+	
+	ctx := candidateContext{
+		originalModel:    originalModel,
+		role:             role,
+		conf:             conf,
+		models:           models,
+		nvidiaModels:     nvidiaModels,
+		cerebrasModels:   cerebrasModels,
+		ollamaModels:     ollamaModels,
+		allowPaid:        allowPaid,
+		allowIDE:         allowIDE,
+		isCooldown:       isCooldown,
+		isExcluded:       isExcluded,
+		isComplexRequest: isComplex(bodyMap),
+	}
 	if role == "polecat" {
-		isComplexRequest = true // Treat all polecat requests as complex
+		ctx.isComplexRequest = true
 	}
 
-	// Tier 0.1: Cerebras Budget Models (Free Previews / Ultra-cheap 8B)
-	for _, cid := range conf.CerebrasBudget {
-		if !isCooldown(cid) && !isExcluded(cid) {
-			candidates = append(candidates, cid)
-		}
-	}
-
-	// Tier 0.2: Cerebras Performance Models (Only for complex requests)
-	if isComplexRequest {
-		for _, cid := range conf.CerebrasPerformance {
-			if !isCooldown(cid) && !isExcluded(cid) {
-				candidates = append(candidates, cid)
-			}
-		}
-	}
-
-	// Tier 0.4: Dynamic Cerebras Models (Fallback discovery)
-	// We filter these to only include budget/previews if not complex
-	for _, m := range cerebrasModels {
-		modelName := "cerebras/" + m.ID
-		// Avoid duplicates from config
-		alreadyInConfig := false
-		for _, bc := range conf.CerebrasBudget { if bc == modelName { alreadyInConfig = true; break } }
-		for _, pc := range conf.CerebrasPerformance { if pc == modelName { alreadyInConfig = true; break } }
-		if alreadyInConfig { continue }
-
-		if !isCooldown(modelName) && !isExcluded(modelName) {
-			// In dynamic discovery, we are cautious: only add if complex OR if it looks like a budget model
-			isBudget := strings.Contains(m.ID, "8b") || strings.Contains(m.ID, "preview") || strings.Contains(m.ID, "oss") || strings.Contains(m.ID, "qwen-3")
-			if isComplexRequest || isBudget {
-				candidates = append(candidates, modelName)
-			}
-		}
-	}
-
-	// Tier 0.5: Role-based overrides
-	if role == "polecat" && allowPaid {
-		// Polecats need the best - prioritize Claude 3.5 Sonnet
-		candidates = append(candidates, "anthropic/claude-3.5-sonnet")
-	}
-
-	// Tier 0.6: Reliable Models (Always preferred for Gas Town)
-	if role != "" {
-		// Prioritize massive Ollama Cloud models first
-		for _, m := range ollamaModels {
-			modelName := "ollama/" + m.Name
-			if isMassiveModel(modelName) && !isCooldown(modelName) && !isExcluded(modelName) {
-				candidates = append(candidates, modelName)
-			}
-		}
-		// Then reliable free models from config
-		for _, fid := range conf.ReliableFree {
-			// Architect, Mayor, Planner, and Polecat MUST use massive models
-			if (role == "architect" || role == "mayor" || role == "planner" || role == "polecat") && !isMassiveModel(fid) {
-				continue
-			}
-			if !isCooldown(fid) && !isExcluded(fid) {
-				candidates = append(candidates, fid)
-			}
-		}
-		// Then reliable NVIDIA models
-		for _, nid := range conf.NvidiaReliable {
-			// Architect, Mayor, Planner, and Polecat MUST use massive models
-			if (role == "architect" || role == "mayor" || role == "planner" || role == "polecat") && !isMassiveModel(nid) {
-				continue
-			}
-			if !isCooldown(nid) && !isExcluded(nid) {
-				candidates = append(candidates, nid)
-			}
-		}
-	}
-
-	// Tier 1: Original requested model (if Free)
-	// For complex requests, if the original model is a weak/small model (e.g. 11B),
-	// we deprioritize it in favor of nvidiaComplex models.
-	isOriginalFree := false
-	isOriginalWeak := false
-	if originalModel != "" {
-		if !isCooldown(originalModel) {
-			for _, m := range models {
-				if m.ID == originalModel {
-					isOriginalFree = m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
-					break
-				}
-			}
-			if !isOriginalFree {
-				for _, m := range nvidiaModels {
-					if m.ID == originalModel {
-						isOriginalFree = true
-						break
-					}
-				}
-			}
-			if !isOriginalFree {
-				for _, m := range ollamaModels {
-					if "ollama/"+m.Name == originalModel {
-						isOriginalFree = true
-						break
-					}
-				}
-			}
-			// Detect weak models: small parameter counts (1B, 3B, 7B, 8B, 11B, 12B)
-			lowerOrig := strings.ToLower(originalModel)
-			isOriginalWeak = strings.Contains(lowerOrig, "-1b-") ||
-				strings.Contains(lowerOrig, "-3b-") ||
-				strings.Contains(lowerOrig, "-7b-") ||
-				strings.Contains(lowerOrig, "-8b-") ||
-				strings.Contains(lowerOrig, "-11b-") ||
-				strings.Contains(lowerOrig, "-12b-") ||
-				strings.Contains(lowerOrig, "nano") ||
-				strings.Contains(lowerOrig, "mini")
-
-			if isOriginalFree && !isExcluded(originalModel) {
-				if !isComplexRequest || !isOriginalWeak {
-					candidates = append(candidates, originalModel)
-				}
-			}
-		}
-	}
-
-	// Tier 1.5: Reliable Free OpenRouter models (tried FIRST for complex requests)
-	if isComplexRequest {
-		for _, fid := range conf.ReliableFree {
-			if fid == originalModel {
-				continue
-			}
-			// Mayor and Architect need high reasoning - deprioritize mini models
-			if (role == "mayor" || role == "architect") && strings.Contains(fid, "mini") {
-				continue
-			}
-			if !isCooldown(fid) && !isExcluded(fid) {
-				candidates = append(candidates, fid)
-			}
-		}
-	}
-
-	// Tier 2: Complex-task NVIDIA models
-	if isComplexRequest {
-		for _, nid := range conf.NvidiaComplex {
-			if nid == originalModel {
-				continue
-			}
-			if !isCooldown(nid) && !isExcluded(nid) {
-				candidates = append(candidates, nid)
-			}
-		}
-	}
-
-	// Tier 2.5: Free tool-capable NVIDIA models from live API
-	for _, m := range nvidiaModels {
-		if m.ID == originalModel {
-			continue
-		}
-		if !isCooldown(m.ID) && m.SupportsTools && !isExcluded(m.ID) {
-			candidates = append(candidates, m.ID)
-		}
-	}
-
-	// Tier 2.6: Reliable Free OpenRouter models from config (try these before small NVIDIA models)
-	for _, fid := range conf.ReliableFree {
-		if fid == originalModel {
-			continue
-		}
-		// Skip if already in candidates
-		already := false
-		for _, c := range candidates {
-			if c == fid {
-				already = true
-				break
-			}
-		}
-		if already {
-			continue
-		}
-
-		if !isCooldown(fid) {
-			found := false
-			for _, m := range models {
-				if m.ID == fid {
-					found = true
-					break
-				}
-			}
-			if found {
-				candidates = append(candidates, fid)
-			}
-		}
-	}
-
-	// Tier 2.7: Reliable NVIDIA models from config (for both simple and complex)
-	for _, nid := range conf.NvidiaReliable {
-		if nid == originalModel {
-			continue
-		}
-		// Skip if already added
-		already := false
-		for _, c := range candidates {
-			if c == nid {
-				already = true
-				break
-			}
-		}
-		if already {
-			continue
-		}
-		if !isCooldown(nid) && !isExcluded(nid) {
-			candidates = append(candidates, nid)
-		}
-	}
-
-	// For complex requests with weak original models, add the original back as final fallback
-	if isComplexRequest && isOriginalWeak && isOriginalFree && originalModel != "" && !isExcluded(originalModel) && !isCooldown(originalModel) {
-		candidates = append(candidates, originalModel)
-	}
-
-	// Tier 3: Specific Reliable Free OpenRouter models from config
-	for _, fid := range conf.ReliableFree {
-		if fid == originalModel {
-			continue
-		}
-		// Skip if already in candidates
-		already := false
-		for _, c := range candidates {
-			if c == fid {
-				already = true
-				break
-			}
-		}
-		if already {
-			continue
-		}
-
-		if !isCooldown(fid) {
-			for _, m := range models {
-				if m.ID == fid {
-					candidates = append(candidates, fid)
-					break
-				}
-			}
-		}
-	}
-
-	// Tier 3.5: Other Free OpenRouter models
-	for _, m := range models {
-		already := false
-		if m.ID == originalModel {
-			already = true
-		}
-		for _, c := range candidates {
-			if c == m.ID {
-				already = true
-				break
-			}
-		}
-		if already {
-			continue
-		}
-
-		isFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
-		if isFree && !isCooldown(m.ID) && !isExcluded(m.ID) {
-			candidates = append(candidates, m.ID)
-		}
-	}
-
-	// Tier 4: Original requested model (if Paid & Curated & Complex)
-	if originalModel != "" && !isOriginalFree && !isCooldown(originalModel) && allowPaid && isComplexRequest {
-		isCurated := false
-		for _, cp := range conf.CuratedPaid {
-			if cp == originalModel {
-				isCurated = true
-				break
-			}
-		}
-		if isCurated {
-			candidates = append(candidates, originalModel)
-		}
-	}
-
-	// Tier 5: Curated Paid Fallbacks (Only for complex requests)
-	if isComplexRequest && allowPaid {
-		curatedPaid := []string{
-			"openai/gpt-4o-mini",
-			"google/gemini-2.0-flash-001",
-			"anthropic/claude-3.5-sonnet",
-		}
-		for _, paidID := range curatedPaid {
-			if !isCooldown(paidID) && paidID != originalModel {
-				exists := false
-				for _, c := range candidates {
-					if c == paidID {
-						exists = true
-						break
-					}
-				}
-				if !exists {
-					candidates = append(candidates, paidID)
-				}
-			}
-		}
-	}
-
-	// Tier 6: Local IDE Fallbacks (Opt-in)
-	if allowIDE {
-		for _, m := range conf.IdeModels {
-			if !isCooldown(m.ID) && !isExcluded(m.ID) {
-				candidates = append(candidates, m.ID)
-			}
-		}
-	}
+	candidates := selectCandidates(ctx)
 
 	// If all are in cooldown, only try free models - never fall back to paid models
 	if len(candidates) == 0 {
-		log.Printf("[DEBUG] candidates empty, checking models: or=%s len(models)=%d len(nvidiaModels)=%d", originalModel, len(models), len(nvidiaModels))
+		log.Printf("[DEBUG] candidates empty, checking models: or=%s len(models)=%d len(nvidiaModels)=%d", originalModel, len(cachedFreeModels), len(cachedNvidiaModels))
 		// Filter to only tool-capable models for fallback
 		toolCapableNvidia := func() []nvidiaModel {
 			var filtered []nvidiaModel
-			for _, m := range nvidiaModels {
+			for _, m := range cachedNvidiaModels {
 				if m.SupportsTools {
 					filtered = append(filtered, m)
 				}
 			}
 			return filtered
 		}()
-		if len(models) > 0 && !isCooldown(models[0].ID) {
-			candidates = append(candidates, models[0].ID)
-			log.Printf("[DEBUG] using OpenRouter fallback: %s", models[0].ID)
+		if len(cachedFreeModels) > 0 && !isCooldown(cachedFreeModels[0].ID) {
+			candidates = append(candidates, cachedFreeModels[0].ID)
+			log.Printf("[DEBUG] using OpenRouter fallback: %s", cachedFreeModels[0].ID)
 		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) {
 			candidates = append([]string{"meta-llama/llama-3.3-70b-instruct"}, candidates...)
 			log.Printf("[DEBUG] using NVIDIA tool-capable fallback: %s", toolCapableNvidia[0].ID)
@@ -1190,30 +909,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
+			return
 		}
 	}
 
-
-	// Deduplicate candidates
-	uniqueCandidates := []string{}
-	seenCandidates := make(map[string]bool)
-	for _, c := range candidates {
-		if !seenCandidates[c] {
-			uniqueCandidates = append(uniqueCandidates, c)
-			seenCandidates[c] = true
-		}
-	}
-	candidates = uniqueCandidates
-
-	if role == "architect" || role == "mayor" {
-		var massiveCandidates []string
-		for _, c := range candidates {
-			if isMassiveModel(c) {
-				massiveCandidates = append(massiveCandidates, c)
-			}
-		}
-		candidates = massiveCandidates
-	}
 
 	log.Printf("[DEBUG] Final Candidates: %v", candidates)
 
@@ -2981,4 +2680,293 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 	}
 
 	return finalTools
+}
+
+func selectCandidates(ctx candidateContext) []string {
+	var candidates []string
+
+	// Tier 0.1: Cerebras Budget Models (Free Previews / Ultra-cheap 8B)
+	for _, cid := range ctx.conf.CerebrasBudget {
+		if !ctx.isCooldown(cid) && !ctx.isExcluded(cid) {
+			candidates = append(candidates, cid)
+		}
+	}
+
+	// Tier 0.2: Cerebras Performance Models (Only for complex requests AND if paid is allowed)
+	if ctx.isComplexRequest && ctx.allowPaid {
+		for _, cid := range ctx.conf.CerebrasPerformance {
+			if !ctx.isCooldown(cid) && !ctx.isExcluded(cid) {
+				candidates = append(candidates, cid)
+			}
+		}
+	}
+
+	// Tier 0.4: Dynamic Cerebras Models (Fallback discovery)
+	for _, m := range ctx.cerebrasModels {
+		modelName := "cerebras/" + m.ID
+		alreadyInConfig := false
+		for _, bc := range ctx.conf.CerebrasBudget { if bc == modelName { alreadyInConfig = true; break } }
+		for _, pc := range ctx.conf.CerebrasPerformance { if pc == modelName { alreadyInConfig = true; break } }
+		if alreadyInConfig { continue }
+
+		if !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
+			isBudget := strings.Contains(m.ID, "8b") || strings.Contains(m.ID, "preview") || strings.Contains(m.ID, "oss") || strings.Contains(m.ID, "qwen-3")
+			if ctx.isComplexRequest || isBudget {
+				candidates = append(candidates, modelName)
+			}
+		}
+	}
+
+	// Tier 0.5: Role-based overrides
+	if ctx.role == "polecat" && ctx.allowPaid {
+		candidates = append(candidates, "anthropic/claude-3.5-sonnet")
+	}
+
+	// Tier 0.6: Reliable Models (Always preferred for Gas Town)
+	if ctx.role != "" {
+		for _, m := range ctx.ollamaModels {
+			modelName := "ollama/" + m.Name
+			if isMassiveModel(modelName) && !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
+				candidates = append(candidates, modelName)
+			}
+		}
+		for _, fid := range ctx.conf.ReliableFree {
+			if (ctx.role == "architect" || ctx.role == "mayor" || ctx.role == "planner" || ctx.role == "polecat") && !isMassiveModel(fid) {
+				continue
+			}
+			if !ctx.isCooldown(fid) && !ctx.isExcluded(fid) {
+				candidates = append(candidates, fid)
+			}
+		}
+		for _, nid := range ctx.conf.NvidiaReliable {
+			if (ctx.role == "architect" || ctx.role == "mayor" || ctx.role == "planner" || ctx.role == "polecat") && !isMassiveModel(nid) {
+				continue
+			}
+			if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
+				candidates = append(candidates, nid)
+			}
+		}
+	}
+
+	// Tier 1: Original requested model (if Free)
+	isOriginalFree := false
+	isOriginalWeak := false
+	if ctx.originalModel != "" {
+		if !ctx.isCooldown(ctx.originalModel) {
+			for _, m := range ctx.models {
+				if m.ID == ctx.originalModel {
+					isOriginalFree = m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
+					break
+				}
+			}
+			if !isOriginalFree {
+				for _, m := range ctx.nvidiaModels {
+					if m.ID == ctx.originalModel {
+						isOriginalFree = true
+						break
+					}
+				}
+			}
+			if !isOriginalFree {
+				for _, m := range ctx.ollamaModels {
+					if "ollama/"+m.Name == ctx.originalModel {
+						isOriginalFree = true
+						break
+					}
+				}
+			}
+			lowerOrig := strings.ToLower(ctx.originalModel)
+			isOriginalWeak = strings.Contains(lowerOrig, "-1b-") ||
+				strings.Contains(lowerOrig, "-3b-") ||
+				strings.Contains(lowerOrig, "-7b-") ||
+				strings.Contains(lowerOrig, "-8b-") ||
+				strings.Contains(lowerOrig, "-11b-") ||
+				strings.Contains(lowerOrig, "-12b-") ||
+				strings.Contains(lowerOrig, "nano") ||
+				strings.Contains(lowerOrig, "mini")
+
+			if isOriginalFree && !ctx.isExcluded(ctx.originalModel) {
+				if !ctx.isComplexRequest || !isOriginalWeak {
+					candidates = append(candidates, ctx.originalModel)
+				}
+			}
+		}
+	}
+
+	// Tier 1.5: Reliable Free OpenRouter models
+	if ctx.isComplexRequest {
+		for _, fid := range ctx.conf.ReliableFree {
+			if fid == ctx.originalModel {
+				continue
+			}
+			if (ctx.role == "mayor" || ctx.role == "architect") && strings.Contains(fid, "mini") {
+				continue
+			}
+			if !ctx.isCooldown(fid) && !ctx.isExcluded(fid) {
+				candidates = append(candidates, fid)
+			}
+		}
+	}
+
+	// Tier 2: Complex-task NVIDIA models
+	if ctx.isComplexRequest {
+		for _, nid := range ctx.conf.NvidiaComplex {
+			if nid == ctx.originalModel {
+				continue
+			}
+			if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
+				candidates = append(candidates, nid)
+			}
+		}
+	}
+
+	// Tier 2.5: Free tool-capable NVIDIA models
+	for _, m := range ctx.nvidiaModels {
+		if m.ID == ctx.originalModel {
+			continue
+		}
+		if !ctx.isCooldown(m.ID) && m.SupportsTools && !ctx.isExcluded(m.ID) {
+			candidates = append(candidates, m.ID)
+		}
+	}
+
+	// Tier 2.6: Reliable Free OpenRouter models
+	for _, fid := range ctx.conf.ReliableFree {
+		if fid == ctx.originalModel {
+			continue
+		}
+		already := false
+		for _, c := range candidates { if c == fid { already = true; break } }
+		if already { continue }
+
+		if !ctx.isCooldown(fid) {
+			found := false
+			for _, m := range ctx.models { if m.ID == fid { found = true; break } }
+			if found { candidates = append(candidates, fid) }
+		}
+	}
+
+	// Tier 2.7: Reliable NVIDIA models
+	for _, nid := range ctx.conf.NvidiaReliable {
+		if nid == ctx.originalModel {
+			continue
+		}
+		already := false
+		for _, c := range candidates { if c == nid { already = true; break } }
+		if already { continue }
+		if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
+			candidates = append(candidates, nid)
+		}
+	}
+
+	// Tier 2.8: Cerebras Performance Fallback (For simple requests, try after free models)
+	if !ctx.isComplexRequest && ctx.allowPaid {
+		for _, cid := range ctx.conf.CerebrasPerformance {
+			already := false
+			for _, c := range candidates { if c == cid { already = true; break } }
+			if already { continue }
+			if !ctx.isCooldown(cid) && !ctx.isExcluded(cid) {
+				candidates = append(candidates, cid)
+			}
+		}
+	}
+
+	if ctx.isComplexRequest && isOriginalWeak && isOriginalFree && ctx.originalModel != "" && !ctx.isExcluded(ctx.originalModel) && !ctx.isCooldown(ctx.originalModel) {
+		candidates = append(candidates, ctx.originalModel)
+	}
+
+	// Tier 3: Specific Reliable Free OpenRouter models
+	for _, fid := range ctx.conf.ReliableFree {
+		if fid == ctx.originalModel {
+			continue
+		}
+		already := false
+		for _, c := range candidates { if c == fid { already = true; break } }
+		if already { continue }
+
+		if !ctx.isCooldown(fid) {
+			for _, m := range ctx.models {
+				if m.ID == fid {
+					candidates = append(candidates, fid)
+					break
+				}
+			}
+		}
+	}
+
+	// Tier 3.5: Other Free OpenRouter models
+	for _, m := range ctx.models {
+		already := false
+		if m.ID == ctx.originalModel { already = true }
+		for _, c := range candidates { if c == m.ID { already = true; break } }
+		if already { continue }
+
+		isFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
+		if isFree && !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) {
+			candidates = append(candidates, m.ID)
+		}
+	}
+
+	// Tier 4: Original requested model (if Paid & Curated & Complex)
+	if ctx.originalModel != "" && !isOriginalFree && !ctx.isCooldown(ctx.originalModel) && ctx.allowPaid && ctx.isComplexRequest {
+		isCurated := false
+		for _, cp := range ctx.conf.CuratedPaid {
+			if cp == ctx.originalModel {
+				isCurated = true
+				break
+			}
+		}
+		if isCurated {
+			candidates = append(candidates, ctx.originalModel)
+		}
+	}
+
+	// Tier 5: Curated Paid Fallbacks
+	if ctx.isComplexRequest && ctx.allowPaid {
+		curatedPaid := []string{
+			"openai/gpt-4o-mini",
+			"google/gemini-2.0-flash-001",
+			"anthropic/claude-3.5-sonnet",
+		}
+		for _, paidID := range curatedPaid {
+			if !ctx.isCooldown(paidID) && paidID != ctx.originalModel {
+				exists := false
+				for _, c := range candidates { if c == paidID { exists = true; break } }
+				if !exists { candidates = append(candidates, paidID) }
+			}
+		}
+	}
+
+	// Tier 6: Local IDE Fallbacks
+	if ctx.allowIDE {
+		for _, m := range ctx.conf.IdeModels {
+			if !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) {
+				candidates = append(candidates, m.ID)
+			}
+		}
+	}
+
+	// Deduplicate candidates
+	uniqueCandidates := []string{}
+	seenCandidates := make(map[string]bool)
+	for _, c := range candidates {
+		if !seenCandidates[c] {
+			uniqueCandidates = append(uniqueCandidates, c)
+			seenCandidates[c] = true
+		}
+	}
+	candidates = uniqueCandidates
+
+	// Final role-based filtering: Architect, Mayor, Planner, and Polecat MUST use massive models
+	if ctx.role == "architect" || ctx.role == "mayor" || ctx.role == "planner" || ctx.role == "polecat" {
+		var massiveCandidates []string
+		for _, c := range candidates {
+			if isMassiveModel(c) {
+				massiveCandidates = append(massiveCandidates, c)
+			}
+		}
+		candidates = massiveCandidates
+	}
+
+	return candidates
 }

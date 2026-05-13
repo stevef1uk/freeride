@@ -224,6 +224,18 @@ Edit `models.yaml` to control which models the proxy uses:
 ```yaml
 # Freeride Model Configuration
 
+# Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
+cerebrasBudget:
+  - "cerebras/llama3.1-8b"
+  - "cerebras/gpt-oss-120b"
+  - "cerebras/qwen-3-235b-a22b-instruct-2507"
+
+# Priority 0.5: Paid Cerebras Performance (Used for COMPLEX only)
+# Note: These require the --allow-paid flag to be used.
+cerebrasPerformance:
+  - "cerebras/llama3.3-70b"
+  - "cerebras/llama3.1-70b"
+
 # Priority 1: Specifically requested reliable free models
 reliableFree:
   - "google/gemini-2.0-flash-exp:free"
