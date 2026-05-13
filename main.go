@@ -42,13 +42,14 @@ type ideModel struct {
 }
 
 type modelsConfig struct {
-	CerebrasReliable []string   `yaml:"cerebrasReliable"`
-	ReliableFree     []string   `yaml:"reliableFree"`
-	NvidiaReliable   []string   `yaml:"nvidiaReliable"`
-	NvidiaComplex    []string   `yaml:"nvidiaComplex"`
-	CuratedPaid      []string   `yaml:"curatedPaid"`
-	ExcludeModels    []string   `yaml:"excludeModels"`
-	IdeModels        []ideModel `yaml:"ideModels"`
+	CerebrasBudget      []string   `yaml:"cerebrasBudget"`
+	CerebrasPerformance []string   `yaml:"cerebrasPerformance"`
+	ReliableFree        []string   `yaml:"reliableFree"`
+	NvidiaReliable      []string   `yaml:"nvidiaReliable"`
+	NvidiaComplex       []string   `yaml:"nvidiaComplex"`
+	CuratedPaid         []string   `yaml:"curatedPaid"`
+	ExcludeModels       []string   `yaml:"excludeModels"`
+	IdeModels           []ideModel `yaml:"ideModels"`
 }
 
 var (
@@ -82,8 +83,8 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d Cerebras, %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config",
-		len(globalModelsConfig.CerebrasReliable), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels))
+	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config",
+		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels))
 }
 
 func isExcluded(model string) bool {
@@ -855,18 +856,38 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		isComplexRequest = true // Treat all polecat requests as complex
 	}
 
-	// Tier 0.3: Reliable Cerebras Models from config (Highest Priority)
-	for _, cid := range conf.CerebrasReliable {
+	// Tier 0.1: Cerebras Budget Models (Free Previews / Ultra-cheap 8B)
+	for _, cid := range conf.CerebrasBudget {
 		if !isCooldown(cid) && !isExcluded(cid) {
 			candidates = append(candidates, cid)
 		}
 	}
 
-	// Tier 0.4: Cerebras Models (Highest Priority)
+	// Tier 0.2: Cerebras Performance Models (Only for complex requests)
+	if isComplexRequest {
+		for _, cid := range conf.CerebrasPerformance {
+			if !isCooldown(cid) && !isExcluded(cid) {
+				candidates = append(candidates, cid)
+			}
+		}
+	}
+
+	// Tier 0.4: Dynamic Cerebras Models (Fallback discovery)
+	// We filter these to only include budget/previews if not complex
 	for _, m := range cerebrasModels {
 		modelName := "cerebras/" + m.ID
+		// Avoid duplicates from config
+		alreadyInConfig := false
+		for _, bc := range conf.CerebrasBudget { if bc == modelName { alreadyInConfig = true; break } }
+		for _, pc := range conf.CerebrasPerformance { if pc == modelName { alreadyInConfig = true; break } }
+		if alreadyInConfig { continue }
+
 		if !isCooldown(modelName) && !isExcluded(modelName) {
-			candidates = append(candidates, modelName)
+			// In dynamic discovery, we are cautious: only add if complex OR if it looks like a budget model
+			isBudget := strings.Contains(m.ID, "8b") || strings.Contains(m.ID, "preview") || strings.Contains(m.ID, "oss") || strings.Contains(m.ID, "qwen-3")
+			if isComplexRequest || isBudget {
+				candidates = append(candidates, modelName)
+			}
 		}
 	}
 

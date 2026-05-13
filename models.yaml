@@ -1,9 +1,13 @@
-# Priority 0.5: Fast Cerebras models (Highest Priority)
-cerebrasReliable:
+# Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
+cerebrasBudget:
   - "cerebras/llama3.1-8b"
-  - "cerebras/llama3.3-70b"
   - "cerebras/gpt-oss-120b"
   - "cerebras/qwen-3-235b-a22b-instruct-2507"
+
+# Priority 0.5: Paid Cerebras Performance (Used for COMPLEX only)
+cerebrasPerformance:
+  - "cerebras/llama3.3-70b"
+  - "cerebras/llama3.1-70b"
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
