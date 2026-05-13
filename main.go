@@ -42,12 +42,13 @@ type ideModel struct {
 }
 
 type modelsConfig struct {
-	ReliableFree   []string   `yaml:"reliableFree"`
-	NvidiaReliable []string   `yaml:"nvidiaReliable"`
-	NvidiaComplex  []string   `yaml:"nvidiaComplex"`
-	CuratedPaid    []string   `yaml:"curatedPaid"`
-	ExcludeModels  []string   `yaml:"excludeModels"`
-	IdeModels      []ideModel `yaml:"ideModels"`
+	CerebrasReliable []string   `yaml:"cerebrasReliable"`
+	ReliableFree     []string   `yaml:"reliableFree"`
+	NvidiaReliable   []string   `yaml:"nvidiaReliable"`
+	NvidiaComplex    []string   `yaml:"nvidiaComplex"`
+	CuratedPaid      []string   `yaml:"curatedPaid"`
+	ExcludeModels    []string   `yaml:"excludeModels"`
+	IdeModels        []ideModel `yaml:"ideModels"`
 }
 
 var (
@@ -81,8 +82,8 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config",
-		len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels))
+	log.Printf("[INFO] Loaded %d Cerebras, %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config",
+		len(globalModelsConfig.CerebrasReliable), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels))
 }
 
 func isExcluded(model string) bool {
@@ -107,6 +108,13 @@ type nvidiaModel struct {
 	SupportsTools bool `json:"-"`
 }
 
+type cerebrasModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
 type ollamaModelDetails struct {
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
@@ -129,9 +137,10 @@ type ollamaTagsResponse struct {
 }
 
 var (
-	cachedFreeModels   []openRouterModel
-	cachedNvidiaModels []nvidiaModel
-	cachedOllamaModels []ollamaModel
+	cachedFreeModels     []openRouterModel
+	cachedNvidiaModels   []nvidiaModel
+	cachedCerebrasModels []cerebrasModel
+	cachedOllamaModels   []ollamaModel
 	cacheMutex         sync.RWMutex
 	cacheTime          time.Time
 	cacheTTL           = 1 * time.Hour
@@ -382,6 +391,52 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 	return freeModels, nil
 }
 
+func fetchCerebrasModels() ([]cerebrasModel, error) {
+	cacheMutex.RLock()
+	if time.Since(cacheTime) < cacheTTL && len(cachedCerebrasModels) > 0 {
+		models := cachedCerebrasModels
+		cacheMutex.RUnlock()
+		return models, nil
+	}
+	cacheMutex.RUnlock()
+
+	apiKey := os.Getenv("CEREBRAS_API_KEY")
+	if apiKey == "" {
+		log.Printf("[DEBUG] CEREBRAS_API_KEY not set, skipping Cerebras models")
+		return nil, nil
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), "GET", "https://api.cerebras.ai/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Cerebras API returned status %d", resp.StatusCode)
+	}
+
+	var wrapper struct {
+		Data []cerebrasModel `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, err
+	}
+
+	cacheMutex.Lock()
+	cachedCerebrasModels = wrapper.Data
+	cacheMutex.Unlock()
+
+	log.Printf("[DEBUG] Fetched %d Cerebras models", len(wrapper.Data))
+	return wrapper.Data, nil
+}
+
 func fetchOllamaCloudModels() ([]ollamaModel, error) {
 	cacheMutex.RLock()
 	if time.Since(cacheTime) < cacheTTL && len(cachedOllamaModels) > 0 {
@@ -502,6 +557,7 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nvidiaModels, _ := fetchNvidiaFreeModels()
+	cerebrasModels, _ := fetchCerebrasModels()
 	ollamaModelsList, _ := fetchOllamaCloudModels()
 
 	var ollamaModels []ollamaModel
@@ -539,6 +595,24 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 				Format:            "gguf",
 				Family:            "nvidia",
 				Families:          []string{"nvidia"},
+				ParameterSize:     "unknown",
+				QuantizationLevel: "none",
+			},
+		})
+	}
+
+	// Add Cerebras models to discovery
+	for _, m := range cerebrasModels {
+		ollamaModels = append(ollamaModels, ollamaModel{
+			Name:       "cerebras/" + m.ID,
+			Model:      "cerebras/" + m.ID,
+			ModifiedAt: time.Unix(m.Created, 0).Format(time.RFC3339),
+			Size:       0,
+			Digest:     "sha256:cerebras",
+			Details: ollamaModelDetails{
+				Format:            "gguf",
+				Family:            "cerebras",
+				Families:          []string{"cerebras"},
 				ParameterSize:     "unknown",
 				QuantizationLevel: "none",
 			},
@@ -698,6 +772,7 @@ func isMassiveModel(modelName string) bool {
 	lower := strings.ToLower(modelName)
 	return strings.Contains(lower, "671b") ||
 		strings.Contains(lower, "397b") ||
+		strings.Contains(lower, "235b") ||
 		strings.Contains(lower, "1t") ||
 		strings.Contains(lower, "120b") ||
 		strings.Contains(lower, "large") ||
@@ -760,6 +835,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	models, _ := fetchFreeModels()
 	nvidiaModels, _ := fetchNvidiaFreeModels()
+	cerebrasModels, _ := fetchCerebrasModels()
 	ollamaModels, _ := fetchOllamaCloudModels()
 
 	// Build candidates list from BOTH OpenRouter AND NVIDIA free models
@@ -779,6 +855,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		isComplexRequest = true // Treat all polecat requests as complex
 	}
 
+	// Tier 0.3: Reliable Cerebras Models from config (Highest Priority)
+	for _, cid := range conf.CerebrasReliable {
+		if !isCooldown(cid) && !isExcluded(cid) {
+			candidates = append(candidates, cid)
+		}
+	}
+
+	// Tier 0.4: Cerebras Models (Highest Priority)
+	for _, m := range cerebrasModels {
+		modelName := "cerebras/" + m.ID
+		if !isCooldown(modelName) && !isExcluded(modelName) {
+			candidates = append(candidates, modelName)
+		}
+	}
+
 	// Tier 0.5: Role-based overrides
 	if role == "polecat" && allowPaid {
 		// Polecats need the best - prioritize Claude 3.5 Sonnet
@@ -796,8 +887,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		// Then reliable free models from config
 		for _, fid := range conf.ReliableFree {
-			// Architect, Mayor, and Planner MUST use massive models
-			if (role == "architect" || role == "mayor" || role == "planner") && !isMassiveModel(fid) {
+			// Architect, Mayor, Planner, and Polecat MUST use massive models
+			if (role == "architect" || role == "mayor" || role == "planner" || role == "polecat") && !isMassiveModel(fid) {
 				continue
 			}
 			if !isCooldown(fid) && !isExcluded(fid) {
@@ -806,8 +897,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		// Then reliable NVIDIA models
 		for _, nid := range conf.NvidiaReliable {
-			// Architect, Mayor, and Planner MUST use massive models
-			if (role == "architect" || role == "mayor" || role == "planner") && !isMassiveModel(nid) {
+			// Architect, Mayor, Planner, and Polecat MUST use massive models
+			if (role == "architect" || role == "mayor" || role == "planner" || role == "polecat") && !isMassiveModel(nid) {
 				continue
 			}
 			if !isCooldown(nid) && !isExcluded(nid) {
@@ -1082,6 +1173,17 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 
+	// Deduplicate candidates
+	uniqueCandidates := []string{}
+	seenCandidates := make(map[string]bool)
+	for _, c := range candidates {
+		if !seenCandidates[c] {
+			uniqueCandidates = append(uniqueCandidates, c)
+			seenCandidates[c] = true
+		}
+	}
+	candidates = uniqueCandidates
+
 	if role == "architect" || role == "mayor" {
 		var massiveCandidates []string
 		for _, c := range candidates {
@@ -1110,6 +1212,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			strings.HasPrefix(candidate, "deepseek/")
 
 		isOllama := strings.HasPrefix(candidate, "ollama/")
+		isCerebras := strings.HasPrefix(candidate, "cerebras/")
 
 		isIDE := false
 		for _, m := range conf.IdeModels {
@@ -1123,6 +1226,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		if isIDE {
 			// No-op, targetURL already set
+		} else if isCerebras {
+			targetURL = "https://api.cerebras.ai/v1/chat/completions"
+			apiKey = os.Getenv("CEREBRAS_API_KEY")
 		} else if isNvidia {
 			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 			apiKey = os.Getenv("NVIDIA_API_KEY")
@@ -1177,6 +1283,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			currentBody["model"] = strings.TrimSuffix(candidate, ":free")
 			// Strip ollama/ prefix
 			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "ollama/")
+			// Strip cerebras/ prefix
+			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "cerebras/")
 
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)

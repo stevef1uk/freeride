@@ -1,4 +1,9 @@
-# Freeride Model Configuration
+# Priority 0.5: Fast Cerebras models (Highest Priority)
+cerebrasReliable:
+  - "cerebras/llama3.1-8b"
+  - "cerebras/llama3.3-70b"
+  - "cerebras/gpt-oss-120b"
+  - "cerebras/qwen-3-235b-a22b-instruct-2507"
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:

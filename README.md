@@ -1,6 +1,6 @@
 # Freeride Proxy (v1.2.0)
 
-A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
+A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **Cerebras**, **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
 
 Use it **standalone** with any OpenAI-compatible client, or as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration.
 
@@ -13,6 +13,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 - **Proxy-Magic (Resilient Tool-Use)**: Intercepts conversational command mentions (e.g., "I will now run `gt hook`") and markdown code blocks, converting them into official tool calls. Enables autonomous tool-use for free-tier models that struggle with strict JSON tool APIs.
 - **Strict Cost Optimization**: Eliminated unintended paid fallbacks. If free models are exhausted, the proxy returns 503 rather than routing to paid models.
 - **Robust Tiered Selection**:
+  - **Tier 0**: Prioritizes **Cerebras** models for lightning-fast inference.
   - **Tier 1**: Prioritizes the original requested model if confirmed free.
   - **Tier 2**: Falls back to tool-capable NVIDIA NIM models (highly reliable and fast).
   - **Tier 3**: Falls back to reliable OpenRouter free models.
@@ -23,6 +24,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 ## Prerequisites
 
 - Go 1.18+ (for building from source)
+- A **Cerebras API key** (Optional, for fastest inference)
 - An **OpenRouter API key** (for free OpenRouter models)
 - An **NVIDIA API key** (for highest-performance free NIM models)
 - An **Ollama API key** (for Ollama Cloud models like Qwen3 480B and DeepSeek V4)
@@ -41,6 +43,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
    OPENROUTER_API_KEY=sk-or-v1-...
    NVIDIA_API_KEY=nvapi-...
    OLLAMA_API_KEY=1b18...
+   CEREBRAS_API_KEY=csk-...
    ```
 
 3. Run:
