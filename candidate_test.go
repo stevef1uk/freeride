@@ -126,7 +126,7 @@ func TestSelectCandidates_RoleMassiveRequirement(t *testing.T) {
 	conf := modelsConfig{
 		ReliableFree: []string{
 			"google/gemini-2.0-flash-exp:free", // Not massive
-			"meta-llama/llama-3.1-405b:free",    // Massive
+			"meta-llama/llama-3.1-405b:free",   // Massive
 		},
 	}
 
@@ -171,5 +171,43 @@ func TestSelectCandidates_RoleMassiveRequirement(t *testing.T) {
 				t.Errorf("Expected first candidate %s, got %s", tt.expectedFirst, candidates[0])
 			}
 		})
+	}
+}
+
+func TestSelectCandidates_LocalOpenAI(t *testing.T) {
+	conf := modelsConfig{
+		ReliableFree: []string{"small/free:free"},
+		LocalOpenAI: []localOpenAIModel{
+			{ID: "local/qwen3-coder", Endpoint: "http://127.0.0.1:8080", Model: "qwen3-coder"},
+		},
+	}
+	ctx := candidateContext{
+		role:             "user",
+		conf:             conf,
+		isComplexRequest: false,
+		allowLocalOpenAI: false,
+		isCooldown:       func(m string) bool { return false },
+		isExcluded:       func(m string) bool { return false },
+		models: []openRouterModel{
+			{ID: "small/free:free", Pricing: struct {
+				Prompt     string `json:"prompt"`
+				Completion string `json:"completion"`
+			}{Prompt: "0", Completion: "0"}},
+		},
+	}
+	off := selectCandidates(ctx)
+	for _, c := range off {
+		if c == "local/qwen3-coder" {
+			t.Fatalf("expected local OpenAI ids omitted without flag, got %v", off)
+		}
+	}
+
+	ctx.allowLocalOpenAI = true
+	on := selectCandidates(ctx)
+	if len(on) == 0 {
+		t.Fatal("expected candidates")
+	}
+	if on[len(on)-1] != "local/qwen3-coder" {
+		t.Fatalf("expected local model last, got %v", on)
 	}
 }

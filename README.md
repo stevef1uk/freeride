@@ -60,6 +60,8 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 
 - `--debug`: Verbose logging of requests, routing decisions, and API responses.
 - `--allow-paid`: Allows paid models as fallback. **Disabled by default** (strict zero-cost mode).
+- `--allow-ide`: Allows `ideModels` entries in `models.yaml` (local IDE bridges) as a last-resort fallback. **Disabled by default**.
+- `--allow-local-openai`: Allows `localOpenAI` entries in `models.yaml` (for example [llama.cpp](https://github.com/ggerganov/llama.cpp) `llama-server` speaking the OpenAI HTTP API) as a last-resort fallback after cloud routes are exhausted. **Disabled by default**.
 
 ---
 
@@ -256,7 +258,20 @@ curatedPaid:
 # Models to exclude even if they are free
 excludeModels:
   - "google/gemma-4-26b-a4b-it:free" # Currently broken 401
+
+# Optional: local OpenAI-compatible HTTP server (e.g. llama-server on :8080).
+# Requires ./freeride --allow-local-openai. Tried after cloud (and optional IDE) fallbacks.
+# - id: stable name for this route (also used in cooldowns.json).
+# - endpoint: base URL only (no /v1 path); the proxy appends /v1/chat/completions.
+# - model: exact JSON "model" string the upstream server expects.
+# - cooldown / apiKeyEnv: optional; see models.yaml comments in the repo.
+localOpenAI:
+  - id: "local/qwen3-coder"
+    endpoint: "http://127.0.0.1:8080"
+    model: "qwen3-coder"
 ```
+
+Use `localOpenAI: []` if you do not run a local server; uncomment or add entries when you do. Run **`go test -run TestHandleChatCompletions_LocalOpenAI`** to exercise the proxy-to-upstream path against a mock server (no real GPU required).
 
 **Verified working models (NVIDIA):**
 - `meta/llama-3.3-70b-instruct` ✅
@@ -264,7 +279,7 @@ excludeModels:
 - `ollama/qwen3-coder:480b` ✅
 - `ollama/deepseek-v4-pro` ✅
 
-The proxy auto-discovers models from OpenRouter, NVIDIA, and Ollama Cloud, but `models.yaml` prioritizes the listed models.
+The proxy auto-discovers models from OpenRouter, NVIDIA, and Ollama Cloud, but `models.yaml` prioritizes the listed models. Optional **`localOpenAI`** backends are not used unless you pass **`--allow-local-openai`**.
 
 ---
 

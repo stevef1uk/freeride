@@ -41,15 +41,26 @@ type ideModel struct {
 	Endpoint string `yaml:"endpoint"`
 }
 
+// localOpenAIModel is an OpenAI-compatible HTTP server (e.g. llama.cpp llama-server)
+// reached directly, without an API key unless apiKeyEnv is set.
+type localOpenAIModel struct {
+	ID        string `yaml:"id"`
+	Endpoint  string `yaml:"endpoint"` // base URL, e.g. http://127.0.0.1:8080
+	Model     string `yaml:"model"`    // value for JSON "model" sent upstream (e.g. qwen3-coder)
+	Cooldown  string `yaml:"cooldown,omitempty"`
+	APIKeyEnv string `yaml:"apiKeyEnv,omitempty"` // optional: env var for Bearer token; if set and empty, no Authorization header
+}
+
 type modelsConfig struct {
-	CerebrasBudget      []string   `yaml:"cerebrasBudget"`
-	CerebrasPerformance []string   `yaml:"cerebrasPerformance"`
-	ReliableFree        []string   `yaml:"reliableFree"`
-	NvidiaReliable      []string   `yaml:"nvidiaReliable"`
-	NvidiaComplex       []string   `yaml:"nvidiaComplex"`
-	CuratedPaid         []string   `yaml:"curatedPaid"`
-	ExcludeModels       []string   `yaml:"excludeModels"`
-	IdeModels           []ideModel `yaml:"ideModels"`
+	CerebrasBudget      []string           `yaml:"cerebrasBudget"`
+	CerebrasPerformance []string           `yaml:"cerebrasPerformance"`
+	ReliableFree        []string           `yaml:"reliableFree"`
+	NvidiaReliable      []string           `yaml:"nvidiaReliable"`
+	NvidiaComplex       []string           `yaml:"nvidiaComplex"`
+	CuratedPaid         []string           `yaml:"curatedPaid"`
+	ExcludeModels       []string           `yaml:"excludeModels"`
+	IdeModels           []ideModel         `yaml:"ideModels"`
+	LocalOpenAI         []localOpenAIModel `yaml:"localOpenAI"`
 }
 
 var (
@@ -83,8 +94,8 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d reliable free, %d NVIDIA, %d curated paid, and %d IDE models from config",
-		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels))
+	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, and %d local OpenAI endpoints from config",
+		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI))
 }
 
 func isExcluded(model string) bool {
@@ -142,19 +153,26 @@ var (
 	cachedNvidiaModels   []nvidiaModel
 	cachedCerebrasModels []cerebrasModel
 	cachedOllamaModels   []ollamaModel
-	cacheMutex         sync.RWMutex
-	cacheTime          time.Time
-	cacheTTL           = 1 * time.Hour
+	cacheMutex           sync.RWMutex
+	cacheTime            time.Time
+	cacheTTL             = 1 * time.Hour
 
 	cooldowns  = make(map[string]*cooldownEntry)
 	cooldownMu sync.RWMutex
 
-	debugMode  bool
-	traceMode  bool
-	allowPaid  bool
-	allowIDE   bool
-	toolRegex  = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
-	paramRegex = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
+	debugMode        bool
+	traceMode        bool
+	allowPaid        bool
+	allowIDE         bool
+	allowLocalOpenAI bool
+	toolRegex        = regexp.MustCompile("(?s)<invoke name=\"([^\"]+)\">(.*?)</invoke>")
+	paramRegex       = regexp.MustCompile("(?s)<parameter name=\"([^\"]+)\">(.*?)</parameter>")
+
+	// Optional test overrides (non-nil only in tests) to avoid live API calls.
+	fetchFreeModelsHook        func() ([]openRouterModel, error)
+	fetchNvidiaFreeModelsHook  func() ([]nvidiaModel, error)
+	fetchCerebrasModelsHook    func() ([]cerebrasModel, error)
+	fetchOllamaCloudModelsHook func() ([]ollamaModel, error)
 )
 
 type candidateContext struct {
@@ -167,6 +185,7 @@ type candidateContext struct {
 	ollamaModels     []ollamaModel
 	allowPaid        bool
 	allowIDE         bool
+	allowLocalOpenAI bool
 	isCooldown       func(string) bool
 	isExcluded       func(string) bool
 	isComplexRequest bool
@@ -238,6 +257,13 @@ func calculateModelCooldown(model string, errorCount int) time.Duration {
 			}
 		}
 	}
+	for _, m := range conf.LocalOpenAI {
+		if m.ID == model && m.Cooldown != "" {
+			if d, err := time.ParseDuration(m.Cooldown); err == nil {
+				return d
+			}
+		}
+	}
 
 	// Standard cooldown logic for other models
 	n := max(1, errorCount)
@@ -252,6 +278,9 @@ func calculateModelCooldown(model string, errorCount int) time.Duration {
 // ... fetchFreeModels, scoreModel, handleTags, handleVersion, handleOllamaChat existing ...
 
 func fetchFreeModels() ([]openRouterModel, error) {
+	if fetchFreeModelsHook != nil {
+		return fetchFreeModelsHook()
+	}
 	log.Printf("[DEBUG] fetchFreeModels called")
 	cacheMutex.RLock()
 	if time.Since(cacheTime) < cacheTTL && len(cachedFreeModels) > 0 {
@@ -295,7 +324,9 @@ func fetchFreeModels() ([]openRouterModel, error) {
 			if isModelFree && debugMode {
 				log.Printf("[DEBUG] OpenRouter Free Model: %s (Price: %s)", m.ID, m.Pricing.Prompt)
 			}
-			if isExcluded(m.ID) { continue }
+			if isExcluded(m.ID) {
+				continue
+			}
 			freeModels = append(freeModels, m)
 		}
 	}
@@ -314,6 +345,9 @@ func fetchFreeModels() ([]openRouterModel, error) {
 }
 
 func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
+	if fetchNvidiaFreeModelsHook != nil {
+		return fetchNvidiaFreeModelsHook()
+	}
 	cacheMutex.RLock()
 	if time.Since(cacheTime) < cacheTTL && len(cachedNvidiaModels) > 0 {
 		models := cachedNvidiaModels
@@ -408,6 +442,9 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 }
 
 func fetchCerebrasModels() ([]cerebrasModel, error) {
+	if fetchCerebrasModelsHook != nil {
+		return fetchCerebrasModelsHook()
+	}
 	cacheMutex.RLock()
 	if time.Since(cacheTime) < cacheTTL && len(cachedCerebrasModels) > 0 {
 		models := cachedCerebrasModels
@@ -454,6 +491,9 @@ func fetchCerebrasModels() ([]cerebrasModel, error) {
 }
 
 func fetchOllamaCloudModels() ([]ollamaModel, error) {
+	if fetchOllamaCloudModelsHook != nil {
+		return fetchOllamaCloudModelsHook()
+	}
 	cacheMutex.RLock()
 	if time.Since(cacheTime) < cacheTTL && len(cachedOllamaModels) > 0 {
 		models := cachedOllamaModels
@@ -669,6 +709,20 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	for _, m := range globalModelsConfig.LocalOpenAI {
+		if m.ID == "" {
+			continue
+		}
+		ollamaModels = append(ollamaModels, ollamaModel{
+			Name:  m.ID,
+			Model: m.ID,
+			Details: ollamaModelDetails{
+				Format:   "gguf",
+				Family:   "local-openai",
+				Families: []string{"local-openai"},
+			},
+		})
+	}
 	configMutex.RUnlock()
 
 	resp := ollamaTagsResponse{Models: ollamaModels}
@@ -796,7 +850,8 @@ func isMassiveModel(modelName string) bool {
 		strings.Contains(lower, "405b") ||
 		strings.Contains(lower, "90b") ||
 		strings.Contains(lower, "80b") ||
-		strings.Contains(lower, "70b")
+		strings.Contains(lower, "70b") ||
+		strings.Contains(lower, "30b")
 }
 
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -864,7 +919,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	configMutex.RLock()
 	conf := globalModelsConfig
 	configMutex.RUnlock()
-	
+
 	ctx := candidateContext{
 		originalModel:    originalModel,
 		role:             role,
@@ -875,6 +930,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		ollamaModels:     ollamaModels,
 		allowPaid:        allowPaid,
 		allowIDE:         allowIDE,
+		allowLocalOpenAI: allowLocalOpenAI,
 		isCooldown:       isCooldown,
 		isExcluded:       isExcluded,
 		isComplexRequest: isComplex(bodyMap),
@@ -904,6 +960,23 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) {
 			candidates = append([]string{"meta-llama/llama-3.3-70b-instruct"}, candidates...)
 			log.Printf("[DEBUG] using NVIDIA tool-capable fallback: %s", toolCapableNvidia[0].ID)
+		} else if allowLocalOpenAI && len(conf.LocalOpenAI) > 0 {
+			for _, lm := range conf.LocalOpenAI {
+				if lm.ID == "" {
+					continue
+				}
+				if !isCooldown(lm.ID) && !isExcluded(lm.ID) {
+					candidates = append(candidates, lm.ID)
+				}
+			}
+			if len(candidates) == 0 {
+				log.Printf("[ERROR] All free models are in cooldown and no local OpenAI endpoint available: %s", originalModel)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
+				return
+			}
+			log.Printf("[DEBUG] using local OpenAI fallback candidates: %v", candidates)
 		} else {
 			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
 			w.Header().Set("Content-Type", "application/json")
@@ -912,7 +985,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
 
 	log.Printf("[DEBUG] Final Candidates: %v", candidates)
 
@@ -935,16 +1007,37 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		isCerebras := strings.HasPrefix(candidate, "cerebras/")
 
 		isIDE := false
+		var localOpenAI *localOpenAIModel
 		for _, m := range conf.IdeModels {
 			if m.ID == candidate {
 				isIDE = true
-				targetURL = m.Endpoint + "/v1/chat/completions"
+				targetURL = strings.TrimSuffix(m.Endpoint, "/") + "/v1/chat/completions"
 				apiKey = "dummy" // IDEs usually don't need a key from the proxy
 				break
 			}
 		}
+		if !isIDE {
+			for i := range conf.LocalOpenAI {
+				m := &conf.LocalOpenAI[i]
+				if m.ID == candidate {
+					if strings.TrimSpace(m.Endpoint) == "" {
+						break
+					}
+					localOpenAI = m
+					targetURL = strings.TrimSuffix(m.Endpoint, "/") + "/v1/chat/completions"
+					if m.APIKeyEnv != "" {
+						apiKey = strings.TrimSpace(os.Getenv(m.APIKeyEnv))
+					} else {
+						apiKey = "dummy"
+					}
+					break
+				}
+			}
+		}
 
-		if isIDE {
+		directOpenAIEndpoint := isIDE || localOpenAI != nil
+
+		if directOpenAIEndpoint {
 			// No-op, targetURL already set
 		} else if isCerebras {
 			targetURL = "https://api.cerebras.ai/v1/chat/completions"
@@ -974,7 +1067,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			apiKey = os.Getenv("OPENROUTER_API_KEY")
 		}
 
-		if !isIDE && apiKey == "" {
+		if !directOpenAIEndpoint && apiKey == "" {
 			continue
 		}
 
@@ -1005,8 +1098,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "ollama/")
 			// Strip cerebras/ prefix
 			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "cerebras/")
-
-			sanitizeBody(currentBody)
+			if localOpenAI != nil && localOpenAI.Model != "" {
+				currentBody["model"] = localOpenAI.Model
+			}
 			outboundBody, _ = json.Marshal(currentBody)
 
 			if debugMode {
@@ -1055,7 +1149,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				req.Header.Add(k, v)
 			}
 		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Del("Authorization")
+		skipBearer := localOpenAI != nil && localOpenAI.APIKeyEnv != "" && apiKey == ""
+		if !skipBearer {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
@@ -1681,6 +1779,26 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	configMutex.RLock()
+	for _, m := range globalModelsConfig.LocalOpenAI {
+		if m.ID == "" {
+			continue
+		}
+		dn := m.Model
+		if dn == "" {
+			dn = m.ID
+		}
+		res.Data = append(res.Data, openAIModel{
+			ID:          m.ID,
+			Type:        "model",
+			Object:      "model",
+			DisplayName: dn,
+			Created:     time.Now().Unix(),
+			OwnedBy:     "local-openai",
+		})
+	}
+	configMutex.RUnlock()
+
 	json.NewEncoder(w).Encode(res)
 }
 
@@ -2034,6 +2152,7 @@ func main() {
 	flag.BoolVar(&traceMode, "trace", false, "Enable extremely verbose trace logging")
 	flag.BoolVar(&allowPaid, "allow-paid", false, "Allow using paid models for complex requests or as fallback")
 	flag.BoolVar(&allowIDE, "allow-ide", false, "Allow using local IDE models as fallback")
+	flag.BoolVar(&allowLocalOpenAI, "allow-local-openai", false, "Allow local OpenAI-compatible servers (models.yaml localOpenAI) as last-resort fallback")
 	flag.Parse()
 
 	// Clean up stale cooldowns on startup
@@ -2705,9 +2824,21 @@ func selectCandidates(ctx candidateContext) []string {
 	for _, m := range ctx.cerebrasModels {
 		modelName := "cerebras/" + m.ID
 		alreadyInConfig := false
-		for _, bc := range ctx.conf.CerebrasBudget { if bc == modelName { alreadyInConfig = true; break } }
-		for _, pc := range ctx.conf.CerebrasPerformance { if pc == modelName { alreadyInConfig = true; break } }
-		if alreadyInConfig { continue }
+		for _, bc := range ctx.conf.CerebrasBudget {
+			if bc == modelName {
+				alreadyInConfig = true
+				break
+			}
+		}
+		for _, pc := range ctx.conf.CerebrasPerformance {
+			if pc == modelName {
+				alreadyInConfig = true
+				break
+			}
+		}
+		if alreadyInConfig {
+			continue
+		}
 
 		if !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
 			isBudget := strings.Contains(m.ID, "8b") || strings.Contains(m.ID, "preview") || strings.Contains(m.ID, "oss") || strings.Contains(m.ID, "qwen-3")
@@ -2836,13 +2967,27 @@ func selectCandidates(ctx candidateContext) []string {
 			continue
 		}
 		already := false
-		for _, c := range candidates { if c == fid { already = true; break } }
-		if already { continue }
+		for _, c := range candidates {
+			if c == fid {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
 
 		if !ctx.isCooldown(fid) {
 			found := false
-			for _, m := range ctx.models { if m.ID == fid { found = true; break } }
-			if found { candidates = append(candidates, fid) }
+			for _, m := range ctx.models {
+				if m.ID == fid {
+					found = true
+					break
+				}
+			}
+			if found {
+				candidates = append(candidates, fid)
+			}
 		}
 	}
 
@@ -2852,8 +2997,15 @@ func selectCandidates(ctx candidateContext) []string {
 			continue
 		}
 		already := false
-		for _, c := range candidates { if c == nid { already = true; break } }
-		if already { continue }
+		for _, c := range candidates {
+			if c == nid {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
 		if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
 			candidates = append(candidates, nid)
 		}
@@ -2863,8 +3015,15 @@ func selectCandidates(ctx candidateContext) []string {
 	if !ctx.isComplexRequest && ctx.allowPaid {
 		for _, cid := range ctx.conf.CerebrasPerformance {
 			already := false
-			for _, c := range candidates { if c == cid { already = true; break } }
-			if already { continue }
+			for _, c := range candidates {
+				if c == cid {
+					already = true
+					break
+				}
+			}
+			if already {
+				continue
+			}
 			if !ctx.isCooldown(cid) && !ctx.isExcluded(cid) {
 				candidates = append(candidates, cid)
 			}
@@ -2881,8 +3040,15 @@ func selectCandidates(ctx candidateContext) []string {
 			continue
 		}
 		already := false
-		for _, c := range candidates { if c == fid { already = true; break } }
-		if already { continue }
+		for _, c := range candidates {
+			if c == fid {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
 
 		if !ctx.isCooldown(fid) {
 			for _, m := range ctx.models {
@@ -2897,9 +3063,18 @@ func selectCandidates(ctx candidateContext) []string {
 	// Tier 3.5: Other Free OpenRouter models
 	for _, m := range ctx.models {
 		already := false
-		if m.ID == ctx.originalModel { already = true }
-		for _, c := range candidates { if c == m.ID { already = true; break } }
-		if already { continue }
+		if m.ID == ctx.originalModel {
+			already = true
+		}
+		for _, c := range candidates {
+			if c == m.ID {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
 
 		isFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
 		if isFree && !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) {
@@ -2931,8 +3106,15 @@ func selectCandidates(ctx candidateContext) []string {
 		for _, paidID := range curatedPaid {
 			if !ctx.isCooldown(paidID) && paidID != ctx.originalModel {
 				exists := false
-				for _, c := range candidates { if c == paidID { exists = true; break } }
-				if !exists { candidates = append(candidates, paidID) }
+				for _, c := range candidates {
+					if c == paidID {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					candidates = append(candidates, paidID)
+				}
 			}
 		}
 	}
@@ -2946,7 +3128,17 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Deduplicate candidates
+	// Tier 7: Local OpenAI-compatible servers (llama.cpp, etc.)
+	if ctx.allowLocalOpenAI {
+		for _, m := range ctx.conf.LocalOpenAI {
+			if m.ID == "" || m.Endpoint == "" {
+				continue
+			}
+			if !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) {
+				candidates = append(candidates, m.ID)
+			}
+		}
+	}
 	uniqueCandidates := []string{}
 	seenCandidates := make(map[string]bool)
 	for _, c := range candidates {

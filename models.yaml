@@ -70,9 +70,25 @@ ideModels:
     cooldown: "24h"
     endpoint: "http://localhost:40000"
 
+# Priority 4: Local OpenAI-compatible HTTP server (e.g. llama.cpp llama-server)
+# Opt-in at runtime: --allow-local-openai
+# - id: proxy-side name (what clients may request; also used for cooldown keys)
+# - endpoint: base URL only (no /v1/... path)
+# - model: exact "model" string the upstream server expects (see its /v1/models)
+# - apiKeyEnv: optional; name of env var holding a Bearer token. If set and empty, no Authorization header is sent.
+localOpenAI: []
+# Example (uncomment and adjust):
+ localOpenAI:
+   - id: "local/qwen3-coder"
+     endpoint: "http://127.0.0.1:8080"
+     model: "qwen3-coder"
+     cooldown: "30m"
+     apiKeyEnv: "LOCAL_LLAMA_API_KEY"
+
 # Notes:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)
 # - NVIDIA models are always free and don't require credits
 # - Free models on OpenRouter often hit rate limits (429)
 # - Run with --allow-paid flag to enable paid model fallbacks
 # - Run with --allow-ide flag to enable local IDE fallbacks when all else is exhausted
+# - Run with --allow-local-openai for localOpenAI entries (after cloud paths are exhausted)
