@@ -600,12 +600,21 @@ func fetchOllamaCloudModels() ([]ollamaModel, error) {
 	myPort := os.Getenv("PORT")
 	isLocalLoop := host == "" && (myPort == "" || myPort == "11434")
 
+	// Never GET /api/tags on ourselves — handleTags already aggregates models.
+	if isLocalLoop && apiKey == "" {
+		log.Printf("[DEBUG] OLLAMA_API_KEY not set and proxy on :11434, skipping Ollama model fetch (loop guard)")
+		return nil, nil
+	}
+
 	if host == "" {
 		if isLocalLoop && apiKey != "" {
 			host = "https://ollama.com"
-		} else {
+		} else if !isLocalLoop {
 			host = "http://localhost:11434"
 		}
+	}
+	if host == "" {
+		return nil, nil
 	}
 	log.Printf("[DEBUG] Fetching Ollama models from %s (key set: %v)", host, apiKey != "")
 	url := strings.TrimSuffix(host, "/") + "/api/tags"
