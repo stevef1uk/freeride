@@ -1,3 +1,51 @@
+# Roles that must use "massive" models (70b+ heuristics in Go) — not model IDs.
+massiveOnlyRoles:
+  - architect
+  - mayor
+  - planner
+  - polecat
+
+# Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
+rolePrepend:
+  polecat:
+    - "anthropic/claude-3.5-sonnet"
+
+# OpenRouter free-model ranking boosts (substring match on model id)
+freeModelScoreBoost:
+  - pattern: "gemini-2.0-flash-exp"
+    boost: 10.0
+  - pattern: "mistral-7b-instruct"
+    boost: 1.0
+
+trustedScoringNames:
+  - google
+  - meta
+  - nvidia
+  - mistral
+  - anthropic
+  - openai
+  - microsoft
+  - qwen
+  - deepseek
+
+# Shown on /v1/models for clients that probe before chat
+compatModels:
+  - id: claude-3-5-sonnet-20241022
+    displayName: Claude 3.5 Sonnet
+    ownedBy: anthropic
+  - id: claude-3-5-sonnet
+    displayName: Claude 3.5 Sonnet (Legacy)
+    ownedBy: anthropic
+  - id: gpt-4o
+    displayName: GPT-4o
+    ownedBy: openai
+  - id: gpt-4
+    displayName: GPT-4
+    ownedBy: openai
+
+defaultResponseModel: "gpt-4o"
+anthropicResponseModel: "claude-3-5-sonnet-20241022"
+
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
   - "cerebras/llama3.1-8b"                   # $0.10/1M tokens
@@ -53,10 +101,27 @@ excludeModels:
   - "nvidia/nemotron-nano-12b-v2-vl"         # TOO SMALL
   - "nvidia/nemotron-mini-4b-instruct"      # TOO SMALL
 
-# Priority 0: Local Reliable Models (Always preferred)
-localReliable:
-  - "ollama/llama3.3"
-  - "ollama/llama3.2:latest"
+# When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
+# capable cloud is tried first; local llama-server is fallback only (end of candidate list).
+blockSmallCloudWhenLocalGPU:
+  models:
+    - "cerebras/llama3.1-8b"
+    - "nvidia/llama-3.1-nemotron-nano-8b-v1"
+    - "nvidia/llama-3.1-nemotron-nano-vl-8b-v1"
+    - "nvidia/nemotron-mini-4b-instruct"
+    - "nvidia/nemotron-nano-12b-v2-vl"
+    - "meta/llama-3.2-11b-vision-instruct"
+    - "mistralai/mistral-nemotron"
+  patterns:
+    - "nano"
+    - "mini"
+    - "-8b"
+    - "-11b"
+    - "-12b"
+    - "-1b"
+    - "-3b"
+    - "-4b"
+    - "llama3.1-8b"
 
 # Priority 3: Local IDE Models (Opt-in via --allow-ide)
 ideModels:
@@ -70,25 +135,18 @@ ideModels:
     cooldown: "24h"
     endpoint: "http://localhost:40000"
 
-# Priority 4: Local OpenAI-compatible HTTP server (e.g. llama.cpp llama-server)
-# Opt-in at runtime: --allow-local-openai
-# - id: proxy-side name (what clients may request; also used for cooldown keys)
-# - endpoint: base URL only (no /v1/... path)
-# - model: exact "model" string the upstream server expects (see its /v1/models)
-# - apiKeyEnv: optional; name of env var holding a Bearer token. If set and empty, no Authorization header is sent.
-localOpenAI: []
-# Example (uncomment and adjust):
- localOpenAI:
-   - id: "local/qwen3-coder"
-     endpoint: "http://127.0.0.1:8080"
-     model: "qwen3-coder"
-     cooldown: "30m"
-     apiKeyEnv: "LOCAL_LLAMA_API_KEY"
+# Local llama-server. Requires: ./freeride --allow-local-openai
+#
+# Two names (not interchangeable):
+#   id    — LLM_MODEL in ~/gt/settings/config.json (Freeride route name)
+#   model — JSON "model" sent to llama-server (from: curl -s :8080/v1/models | jq -r '.data[0].id')
+localOpenAI:
+  - id: "local/qwen3-coder-30b"
+    endpoint: "http://127.0.0.1:8080"
+    model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+    cooldown: "30m"
 
 # Notes:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)
 # - NVIDIA models are always free and don't require credits
-# - Free models on OpenRouter often hit rate limits (429)
-# - Run with --allow-paid flag to enable paid model fallbacks
-# - Run with --allow-ide flag to enable local IDE fallbacks when all else is exhausted
-# - Run with --allow-local-openai for localOpenAI entries (after cloud paths are exhausted)
+# - Run with --allow-paid for paid fallbacks; --allow-local-openai for local fallback + weak-cloud block

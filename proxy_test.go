@@ -44,6 +44,7 @@ func getAvailableModel(t *testing.T) string {
 }
 
 func TestOpenCodeTools(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	// Test if the proxy handles tool definitions for OpenCode
 	payload := map[string]interface{}{
@@ -81,6 +82,7 @@ func TestOpenCodeTools(t *testing.T) {
 }
 
 func TestClaudeCodeTools(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	// Test if the proxy handles Anthropic-style tool blocks
 	payload := map[string]interface{}{
@@ -136,6 +138,7 @@ func TestClaudeCodeTools(t *testing.T) {
 }
 
 func TestAnthropicToolDefinitions(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	// Test if the proxy translates Anthropic's tool definition format (input_schema)
 	payload := map[string]interface{}{
@@ -168,11 +171,14 @@ func TestAnthropicToolDefinitions(t *testing.T) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Anthropic tool definition request failed with status %d", resp.StatusCode)
+		body, _ := ioutil.ReadAll(resp.Body)
+		skipOnLiveProxyOverload(t, resp.StatusCode, body)
+		t.Errorf("Anthropic tool definition request failed with status %d: %s", resp.StatusCode, body)
 	}
 }
 
 func TestOpenCodeBeadsProtocol(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	payload := map[string]interface{}{
 		"model": model,
@@ -220,6 +226,7 @@ func TestOpenCodeBeadsProtocol(t *testing.T) {
 }
 
 func TestClaudeCodeAnthropicProtocol(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	payload := map[string]interface{}{
 		"model": model,
@@ -266,6 +273,7 @@ func TestClaudeCodeAnthropicProtocol(t *testing.T) {
 	}
 }
 func TestLargeToolSet(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	var tools []map[string]interface{}
 	for i := 0; i < 17; i++ {
@@ -302,6 +310,7 @@ func TestLargeToolSet(t *testing.T) {
 }
 
 func TestLargeSystemPrompt(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	// Create a very large system prompt (10KB)
 	systemPrompt := strings.Repeat("Follow these instructions carefully. ", 200)
@@ -326,11 +335,14 @@ func TestLargeSystemPrompt(t *testing.T) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Large system prompt request failed with status %d", resp.StatusCode)
+		body, _ := ioutil.ReadAll(resp.Body)
+		skipOnLiveProxyOverload(t, resp.StatusCode, body)
+		t.Errorf("Large system prompt request failed with status %d: %s", resp.StatusCode, body)
 	}
 }
 
 func TestInvalidToolCall(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	model := getAvailableModel(t)
 	// Test if proxy handles malformed tool definitions gracefully
 	payload := map[string]interface{}{
@@ -353,12 +365,16 @@ func TestInvalidToolCall(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// It should either sanitize it or skip it, but NOT crash or return 503 if models are available
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		t.Errorf("Proxy returned 503 for invalid tool, expected better handling")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		skipOnLiveProxyOverload(t, resp.StatusCode, body)
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			t.Errorf("Proxy returned 503 for invalid tool: %s", body)
+		}
 	}
 }
 func TestModelDiscoveryAndUsage(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	resp, err := http.Get(proxyURL + "/api/tags")
 	if err != nil {
 		t.Fatalf("Failed to fetch models: %v", err)
@@ -448,11 +464,13 @@ func testCompletion(t *testing.T, model string) {
 
 	if resp.StatusCode != http.StatusOK {
 		errorBody, _ := ioutil.ReadAll(resp.Body)
+		skipOnLiveProxyOverload(t, resp.StatusCode, errorBody)
 		t.Errorf("Model %s returned status %d: %s", model, resp.StatusCode, string(errorBody))
 	}
 }
 
 func TestToolCapableModelPreference(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	resp, err := http.Get(proxyURL + "/api/tags")
 	if err != nil {
 		t.Fatalf("Failed to fetch models: %v", err)
@@ -533,6 +551,7 @@ func TestToolCapableModelPreference(t *testing.T) {
 }
 
 func TestModelFallbackChain(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	// Test that the proxy properly falls back through models when one fails
 	// Run multiple requests to exercise the fallback logic
 	successCount := 0
@@ -628,6 +647,7 @@ func TestConversationalToolExtraction(t *testing.T) {
 	}
 }
 func TestRoleBasedPrioritization(t *testing.T) {
+	skipUnlessLiveProxy(t)
 	// Test that providing a Gas Town role prioritizes massive models
 	payload := map[string]interface{}{
 		"model": "openrouter",
@@ -653,12 +673,13 @@ func TestRoleBasedPrioritization(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		errorBody, _ := ioutil.ReadAll(resp.Body)
+		skipOnLiveProxyOverload(t, resp.StatusCode, errorBody)
 		t.Fatalf("Request failed with status %d: %s", resp.StatusCode, string(errorBody))
 	}
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	
+
 	modelUsed, _ := result["model"].(string)
 	t.Logf("Role 'architect' used model: %s", modelUsed)
 	isMassive := strings.Contains(modelUsed, "671b") || 

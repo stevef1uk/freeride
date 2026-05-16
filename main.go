@@ -41,26 +41,53 @@ type ideModel struct {
 	Endpoint string `yaml:"endpoint"`
 }
 
+type scoreBoost struct {
+	Pattern string  `yaml:"pattern"`
+	Boost   float64 `yaml:"boost"`
+}
+
+type compatModel struct {
+	ID          string `yaml:"id"`
+	DisplayName string `yaml:"displayName"`
+	OwnedBy     string `yaml:"ownedBy"`
+	Created     int64  `yaml:"created"`
+}
+
 // localOpenAIModel is an OpenAI-compatible HTTP server (e.g. llama.cpp llama-server)
 // reached directly, without an API key unless apiKeyEnv is set.
 type localOpenAIModel struct {
 	ID        string `yaml:"id"`
 	Endpoint  string `yaml:"endpoint"` // base URL, e.g. http://127.0.0.1:8080
-	Model     string `yaml:"model"`    // value for JSON "model" sent upstream (e.g. qwen3-coder)
+	Model     string `yaml:"model"`    // exact JSON "model" llama-server expects (see GET /v1/models on :8080)
 	Cooldown  string `yaml:"cooldown,omitempty"`
 	APIKeyEnv string `yaml:"apiKeyEnv,omitempty"` // optional: env var for Bearer token; if set and empty, no Authorization header
 }
 
+// blockSmallCloudWhenLocalGPUConfig lists cloud model ids/patterns to skip when localOpenAI
+// is configured and freeride runs with --allow-local-openai (local GPU mode).
+type blockSmallCloudWhenLocalGPUConfig struct {
+	Models   []string `yaml:"models"`
+	Patterns []string `yaml:"patterns"`
+}
+
 type modelsConfig struct {
-	CerebrasBudget      []string           `yaml:"cerebrasBudget"`
-	CerebrasPerformance []string           `yaml:"cerebrasPerformance"`
-	ReliableFree        []string           `yaml:"reliableFree"`
-	NvidiaReliable      []string           `yaml:"nvidiaReliable"`
-	NvidiaComplex       []string           `yaml:"nvidiaComplex"`
-	CuratedPaid         []string           `yaml:"curatedPaid"`
-	ExcludeModels       []string           `yaml:"excludeModels"`
-	IdeModels           []ideModel         `yaml:"ideModels"`
-	LocalOpenAI         []localOpenAIModel `yaml:"localOpenAI"`
+	CerebrasBudget              []string                          `yaml:"cerebrasBudget"`
+	CerebrasPerformance         []string                          `yaml:"cerebrasPerformance"`
+	ReliableFree                []string                          `yaml:"reliableFree"`
+	NvidiaReliable              []string                          `yaml:"nvidiaReliable"`
+	NvidiaComplex               []string                          `yaml:"nvidiaComplex"`
+	CuratedPaid                 []string                          `yaml:"curatedPaid"`
+	ExcludeModels               []string                          `yaml:"excludeModels"`
+	BlockSmallCloudWhenLocalGPU blockSmallCloudWhenLocalGPUConfig `yaml:"blockSmallCloudWhenLocalGPU"`
+	IdeModels                   []ideModel                        `yaml:"ideModels"`
+	LocalOpenAI                 []localOpenAIModel                `yaml:"localOpenAI"`
+	RolePrepend                 map[string][]string               `yaml:"rolePrepend"`
+	MassiveOnlyRoles            []string                          `yaml:"massiveOnlyRoles"`
+	FreeModelScoreBoost         []scoreBoost                      `yaml:"freeModelScoreBoost"`
+	TrustedScoringNames         []string                          `yaml:"trustedScoringNames"`
+	CompatModels                []compatModel                     `yaml:"compatModels"`
+	DefaultResponseModel        string                            `yaml:"defaultResponseModel"`
+	AnthropicResponseModel      string                            `yaml:"anthropicResponseModel"`
 }
 
 var (
@@ -74,19 +101,8 @@ func loadModelsConfig() {
 
 	data, err := ioutil.ReadFile("models.yaml")
 	if err != nil {
-		log.Printf("[WARN] Failed to read models.yaml: %v. Using defaults.", err)
-		// Set defaults if file missing
-		globalModelsConfig = modelsConfig{
-			ReliableFree: []string{
-				"google/gemini-2.0-flash-exp:free",
-				"meta-llama/llama-3.3-70b-instruct:free",
-				"deepseek/deepseek-v3:free",
-			},
-			NvidiaReliable: []string{
-				"meta/llama-3.3-70b-instruct",
-				"nvidia/llama-3.1-70b-instruct",
-			},
-		}
+		log.Printf("[WARN] Failed to read models.yaml: %v. Proxy will not route until config exists.", err)
+		globalModelsConfig = modelsConfig{}
 		return
 	}
 
@@ -94,8 +110,81 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, and %d local OpenAI endpoints from config",
-		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI))
+	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d local-GPU block ids, %d local-GPU block patterns from config",
+		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
+		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
+	// Do not call localGPUEnabled() here — it would RLock while we hold Lock (deadlock).
+	if allowLocalOpenAI && len(globalModelsConfig.LocalOpenAI) > 0 {
+		log.Printf("[INFO] Local GPU mode: %d localOpenAI fallback endpoint(s); small-cloud block list active", len(globalModelsConfig.LocalOpenAI))
+	}
+}
+
+func localGPUEnabled() bool {
+	if !allowLocalOpenAI {
+		return false
+	}
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return len(globalModelsConfig.LocalOpenAI) > 0
+}
+
+func configDefaultResponseModel() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return globalModelsConfig.DefaultResponseModel
+}
+
+func configAnthropicResponseModel() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return globalModelsConfig.AnthropicResponseModel
+}
+
+func roleRequiresMassiveModel(role string) bool {
+	configMutex.RLock()
+	roles := globalModelsConfig.MassiveOnlyRoles
+	configMutex.RUnlock()
+	if len(roles) == 0 {
+		return role == "architect" || role == "mayor" || role == "planner" || role == "polecat"
+	}
+	for _, r := range roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalOpenAIModelID(id string) bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	for _, m := range globalModelsConfig.LocalOpenAI {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func isBlockedSmallCloudWhenLocalGPU(model string) bool {
+	if !localGPUEnabled() {
+		return false
+	}
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	lowerModel := strings.ToLower(model)
+	for _, m := range globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models {
+		if strings.ToLower(m) == lowerModel {
+			return true
+		}
+	}
+	for _, pat := range globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns {
+		pat = strings.ToLower(strings.TrimSpace(pat))
+		if pat != "" && strings.Contains(lowerModel, pat) {
+			return true
+		}
+	}
+	return false
 }
 
 func isExcluded(model string) bool {
@@ -108,6 +197,10 @@ func isExcluded(model string) bool {
 		}
 	}
 	return false
+}
+
+func isCandidateExcluded(model string) bool {
+	return isExcluded(model) || isBlockedSmallCloudWhenLocalGPU(model)
 }
 
 type nvidiaModel struct {
@@ -578,22 +671,22 @@ func scoreModel(m openRouterModel) float64 {
 		score += recencyScore * 0.2
 	}
 
-	trustNames := []string{
-		"google", "meta", "nvidia", "mistral", "anthropic",
-		"openai", "microsoft", "qwen", "deepseek",
-	}
+	configMutex.RLock()
+	trustNames := globalModelsConfig.TrustedScoringNames
+	boosts := globalModelsConfig.FreeModelScoreBoost
+	configMutex.RUnlock()
+
+	lowerID := strings.ToLower(m.ID)
 	for _, name := range trustNames {
-		if strings.Contains(strings.ToLower(m.ID), name) {
+		if strings.Contains(lowerID, strings.ToLower(name)) {
 			score += 0.1
 			break
 		}
 	}
-
-	// MASSIVE BOOST for the most reliable free models
-	if strings.Contains(strings.ToLower(m.ID), "gemini-2.0-flash-exp") {
-		score += 10.0
-	} else if strings.Contains(strings.ToLower(m.ID), "mistral-7b-instruct") {
-		score += 1.0
+	for _, b := range boosts {
+		if b.Pattern != "" && strings.Contains(lowerID, strings.ToLower(b.Pattern)) {
+			score += b.Boost
+		}
 	}
 
 	return score
@@ -932,7 +1025,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		allowIDE:         allowIDE,
 		allowLocalOpenAI: allowLocalOpenAI,
 		isCooldown:       isCooldown,
-		isExcluded:       isExcluded,
+		isExcluded:       isCandidateExcluded,
 		isComplexRequest: isComplex(bodyMap),
 	}
 	if role == "polecat" {
@@ -958,14 +1051,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			candidates = append(candidates, cachedFreeModels[0].ID)
 			log.Printf("[DEBUG] using OpenRouter fallback: %s", cachedFreeModels[0].ID)
 		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) {
-			candidates = append([]string{"meta-llama/llama-3.3-70b-instruct"}, candidates...)
+			candidates = append(candidates, toolCapableNvidia[0].ID)
 			log.Printf("[DEBUG] using NVIDIA tool-capable fallback: %s", toolCapableNvidia[0].ID)
 		} else if allowLocalOpenAI && len(conf.LocalOpenAI) > 0 {
 			for _, lm := range conf.LocalOpenAI {
 				if lm.ID == "" {
 					continue
 				}
-				if !isCooldown(lm.ID) && !isExcluded(lm.ID) {
+				if !isCooldown(lm.ID) && !isCandidateExcluded(lm.ID) {
 					candidates = append(candidates, lm.ID)
 				}
 			}
@@ -1101,6 +1194,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if localOpenAI != nil && localOpenAI.Model != "" {
 				currentBody["model"] = localOpenAI.Model
 			}
+			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)
 
 			if debugMode {
@@ -1421,7 +1515,7 @@ func translateResponsesSSE(w http.ResponseWriter, resp *http.Response, requested
 	itemID := "item_" + fmt.Sprintf("%d", time.Now().Unix())
 	modelName := requestedModel
 	if modelName == "" {
-		modelName = "gpt-4o"
+		modelName = configDefaultResponseModel()
 	}
 
 	// Utility to send a named event
@@ -1636,7 +1730,7 @@ func translateResponsesResponse(w http.ResponseWriter, resp *http.Response, over
 	itemID := "item_" + fmt.Sprintf("%d", time.Now().Unix())
 	modelName := overrideModel
 	if modelName == "" {
-		modelName = "gpt-4o"
+		modelName = configDefaultResponseModel()
 	}
 	if m, ok := chatResp["model"].(string); ok && m != "" {
 		modelName = m
@@ -1739,10 +1833,33 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 		Data   []openAIModel `json:"data"`
 	}
 	res.Object = "list"
-	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet-20241022", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet", Created: 1678888888, OwnedBy: "anthropic"})
-	res.Data = append(res.Data, openAIModel{ID: "claude-3-5-sonnet", Type: "model", Object: "model", DisplayName: "Claude 3.5 Sonnet (Legacy)", Created: 1678888888, OwnedBy: "anthropic"})
-	res.Data = append(res.Data, openAIModel{ID: "gpt-4o", Type: "model", Object: "model", DisplayName: "GPT-4o", Created: 1678888888, OwnedBy: "openai"})
-	res.Data = append(res.Data, openAIModel{ID: "gpt-4", Type: "model", Object: "model", DisplayName: "GPT-4", Created: 1678888888, OwnedBy: "openai"})
+	configMutex.RLock()
+	for _, cm := range globalModelsConfig.CompatModels {
+		if cm.ID == "" {
+			continue
+		}
+		display := cm.DisplayName
+		if display == "" {
+			display = cm.ID
+		}
+		ownedBy := cm.OwnedBy
+		if ownedBy == "" {
+			ownedBy = "freeride"
+		}
+		created := cm.Created
+		if created == 0 {
+			created = 1678888888
+		}
+		res.Data = append(res.Data, openAIModel{
+			ID:          cm.ID,
+			Type:        "model",
+			Object:      "model",
+			DisplayName: display,
+			Created:     created,
+			OwnedBy:     ownedBy,
+		})
+	}
+	configMutex.RUnlock()
 
 	for _, m := range models {
 		res.Data = append(res.Data, openAIModel{
@@ -2152,7 +2269,7 @@ func main() {
 	flag.BoolVar(&traceMode, "trace", false, "Enable extremely verbose trace logging")
 	flag.BoolVar(&allowPaid, "allow-paid", false, "Allow using paid models for complex requests or as fallback")
 	flag.BoolVar(&allowIDE, "allow-ide", false, "Allow using local IDE models as fallback")
-	flag.BoolVar(&allowLocalOpenAI, "allow-local-openai", false, "Allow local OpenAI-compatible servers (models.yaml localOpenAI) as last-resort fallback")
+	flag.BoolVar(&allowLocalOpenAI, "allow-local-openai", false, "Enable localOpenAI fallback (after capable cloud) and blockSmallCloudWhenLocalGPU")
 	flag.Parse()
 
 	// Clean up stale cooldowns on startup
@@ -2299,11 +2416,12 @@ func translateAnthropicResponse(w http.ResponseWriter, resp *http.Response) {
 		log.Printf("[DEBUG] stop_reason set to tool_use (hasTools=true)")
 	}
 
+	anthropicModel := configAnthropicResponseModel()
 	anthropicResp := map[string]interface{}{
 		"id":            "msg_" + fmt.Sprintf("%d", time.Now().Unix()),
 		"type":          "message",
 		"role":          "assistant",
-		"model":         "claude-3-5-sonnet-20241022",
+		"model":         anthropicModel,
 		"content":       anthropicContent,
 		"stop_reason":   stopReason,
 		"stop_sequence": nil,
@@ -2331,7 +2449,7 @@ func translateAnthropicSSE(w http.ResponseWriter, resp *http.Response) {
 
 	flusher, _ := w.(http.Flusher)
 	messageID := "msg_" + fmt.Sprintf("%d", time.Now().Unix())
-	modelName := "claude-3-5-sonnet-20241022"
+	modelName := configAnthropicResponseModel()
 
 	// 1. message_start
 	sendAnthropicEvent(w, flusher, "message_start", map[string]interface{}{
@@ -2848,9 +2966,14 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 0.5: Role-based overrides
-	if ctx.role == "polecat" && ctx.allowPaid {
-		candidates = append(candidates, "anthropic/claude-3.5-sonnet")
+	// Tier 0.5: Role-based prepends (models.yaml rolePrepend)
+	if ctx.allowPaid && ctx.role != "" {
+		for _, mid := range ctx.conf.RolePrepend[ctx.role] {
+			if mid == "" || ctx.isCooldown(mid) || ctx.isExcluded(mid) {
+				continue
+			}
+			candidates = append(candidates, mid)
+		}
 	}
 
 	// Tier 0.6: Reliable Models (Always preferred for Gas Town)
@@ -2862,7 +2985,7 @@ func selectCandidates(ctx candidateContext) []string {
 			}
 		}
 		for _, fid := range ctx.conf.ReliableFree {
-			if (ctx.role == "architect" || ctx.role == "mayor" || ctx.role == "planner" || ctx.role == "polecat") && !isMassiveModel(fid) {
+			if roleRequiresMassiveModel(ctx.role) && !isMassiveModel(fid) {
 				continue
 			}
 			if !ctx.isCooldown(fid) && !ctx.isExcluded(fid) {
@@ -2870,7 +2993,7 @@ func selectCandidates(ctx candidateContext) []string {
 			}
 		}
 		for _, nid := range ctx.conf.NvidiaReliable {
-			if (ctx.role == "architect" || ctx.role == "mayor" || ctx.role == "planner" || ctx.role == "polecat") && !isMassiveModel(nid) {
+			if roleRequiresMassiveModel(ctx.role) && !isMassiveModel(nid) {
 				continue
 			}
 			if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
@@ -3096,14 +3219,9 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 5: Curated Paid Fallbacks
+	// Tier 5: Curated Paid Fallbacks (models.yaml curatedPaid)
 	if ctx.isComplexRequest && ctx.allowPaid {
-		curatedPaid := []string{
-			"openai/gpt-4o-mini",
-			"google/gemini-2.0-flash-001",
-			"anthropic/claude-3.5-sonnet",
-		}
-		for _, paidID := range curatedPaid {
+		for _, paidID := range ctx.conf.CuratedPaid {
 			if !ctx.isCooldown(paidID) && paidID != ctx.originalModel {
 				exists := false
 				for _, c := range candidates {
@@ -3128,7 +3246,7 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 7: Local OpenAI-compatible servers (llama.cpp, etc.)
+	// Tier 7: Local llama-server fallback (after capable cloud; only when --allow-local-openai)
 	if ctx.allowLocalOpenAI {
 		for _, m := range ctx.conf.LocalOpenAI {
 			if m.ID == "" || m.Endpoint == "" {
@@ -3149,11 +3267,11 @@ func selectCandidates(ctx candidateContext) []string {
 	}
 	candidates = uniqueCandidates
 
-	// Final role-based filtering: Architect, Mayor, Planner, and Polecat MUST use massive models
-	if ctx.role == "architect" || ctx.role == "mayor" || ctx.role == "planner" || ctx.role == "polecat" {
+	// Final role-based filtering (models.yaml massiveOnlyRoles)
+	if roleRequiresMassiveModel(ctx.role) {
 		var massiveCandidates []string
 		for _, c := range candidates {
-			if isMassiveModel(c) {
+			if isMassiveModel(c) || isLocalOpenAIModelID(c) {
 				massiveCandidates = append(massiveCandidates, c)
 			}
 		}

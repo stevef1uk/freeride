@@ -5,24 +5,31 @@ import (
 )
 
 func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
+	const (
+		budgetSmall  = "cerebras/budget-small"
+		budgetLarge  = "cerebras/budget-large"
+		perf70       = "cerebras/perf-70b"
+		nvidiaBig    = "test/nvidia-big-70b"
+		cbPreviewNew = "cerebras/preview-new"
+	)
 	conf := modelsConfig{
 		CerebrasBudget: []string{
-			"cerebras/llama3.1-8b",
-			"cerebras/gpt-oss-120b",
+			budgetSmall,
+			budgetLarge,
 		},
 		CerebrasPerformance: []string{
-			"cerebras/llama3.3-70b",
+			perf70,
 		},
 		NvidiaReliable: []string{
-			"nvidia/llama-3.1-70b-instruct",
+			nvidiaBig,
 		},
 	}
 
 	cerebrasModels := []cerebrasModel{
-		{ID: "llama3.1-8b"},
-		{ID: "gpt-oss-120b"},
-		{ID: "llama3.3-70b"},
-		{ID: "new-preview-model"},
+		{ID: "budget-small"},
+		{ID: "budget-large"},
+		{ID: "perf-70b"},
+		{ID: "preview-new"},
 	}
 
 	tests := []struct {
@@ -38,39 +45,39 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 			name:             "Simple request prioritizes budget",
 			role:             "user",
 			isComplexRequest: false,
-			expectedFirst:    "cerebras/llama3.1-8b",
+			expectedFirst:    budgetSmall,
 			allowPaid:        true,
 		},
 		{
 			name:             "Complex request prioritizes performance after budget",
 			role:             "architect",
 			isComplexRequest: true,
-			expectedFirst:    "cerebras/gpt-oss-120b",
-			contains:         "cerebras/llama3.3-70b",
+			expectedFirst:    budgetLarge,
+			contains:         perf70,
 			allowPaid:        true,
 		},
 		{
 			name:             "Cooldown skips model",
 			role:             "user",
 			isComplexRequest: false,
-			cooldowns:        map[string]bool{"cerebras/llama3.1-8b": true},
-			expectedFirst:    "cerebras/gpt-oss-120b",
+			cooldowns:        map[string]bool{budgetSmall: true},
+			expectedFirst:    budgetLarge,
 			allowPaid:        true,
 		},
 		{
 			name:             "Dynamic budget model added even for simple",
 			role:             "user",
 			isComplexRequest: false,
-			cooldowns:        map[string]bool{"cerebras/llama3.1-8b": true, "cerebras/gpt-oss-120b": true},
-			expectedFirst:    "cerebras/new-preview-model",
+			cooldowns:        map[string]bool{budgetSmall: true, budgetLarge: true},
+			expectedFirst:    cbPreviewNew,
 			allowPaid:        true,
 		},
 		{
 			name:             "Simple request tries free models before paid performance fallback",
 			role:             "user",
 			isComplexRequest: false,
-			cooldowns:        map[string]bool{"cerebras/llama3.1-8b": true, "cerebras/gpt-oss-120b": true, "cerebras/new-preview-model": true},
-			expectedFirst:    "nvidia/llama-3.1-70b-instruct",
+			cooldowns:        map[string]bool{budgetSmall: true, budgetLarge: true, cbPreviewNew: true},
+			expectedFirst:    nvidiaBig,
 			allowPaid:        true,
 		},
 		{
@@ -78,7 +85,7 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 			role:             "architect",
 			isComplexRequest: true,
 			allowPaid:        false,
-			expectedFirst:    "cerebras/gpt-oss-120b",
+			expectedFirst:    budgetLarge,
 		},
 	}
 
@@ -123,10 +130,14 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 }
 
 func TestSelectCandidates_RoleMassiveRequirement(t *testing.T) {
+	const (
+		smallFree = "test/small-free"
+		big70Free = "test/big-70b-free"
+	)
 	conf := modelsConfig{
 		ReliableFree: []string{
-			"google/gemini-2.0-flash-exp:free", // Not massive
-			"meta-llama/llama-3.1-405b:free",   // Massive
+			smallFree,
+			big70Free,
 		},
 	}
 
@@ -138,12 +149,12 @@ func TestSelectCandidates_RoleMassiveRequirement(t *testing.T) {
 		{
 			name:          "User gets first available",
 			role:          "user",
-			expectedFirst: "google/gemini-2.0-flash-exp:free",
+			expectedFirst: smallFree,
 		},
 		{
 			name:          "Architect requires massive",
 			role:          "architect",
-			expectedFirst: "meta-llama/llama-3.1-405b:free",
+			expectedFirst: big70Free,
 		},
 	}
 
@@ -156,8 +167,8 @@ func TestSelectCandidates_RoleMassiveRequirement(t *testing.T) {
 				isCooldown:       func(m string) bool { return false },
 				isExcluded:       func(m string) bool { return false },
 				models: []openRouterModel{
-					{ID: "google/gemini-2.0-flash-exp:free"},
-					{ID: "meta-llama/llama-3.1-405b:free"},
+					{ID: smallFree},
+					{ID: big70Free},
 				},
 			}
 
@@ -175,10 +186,14 @@ func TestSelectCandidates_RoleMassiveRequirement(t *testing.T) {
 }
 
 func TestSelectCandidates_LocalOpenAI(t *testing.T) {
+	const (
+		freeOR   = "test/free-or"
+		localGPU = "local/test-gpu"
+	)
 	conf := modelsConfig{
-		ReliableFree: []string{"small/free:free"},
+		ReliableFree: []string{freeOR},
 		LocalOpenAI: []localOpenAIModel{
-			{ID: "local/qwen3-coder", Endpoint: "http://127.0.0.1:8080", Model: "qwen3-coder"},
+			{ID: localGPU, Endpoint: "http://127.0.0.1:8080", Model: "upstream-weights"},
 		},
 	}
 	ctx := candidateContext{
@@ -189,7 +204,7 @@ func TestSelectCandidates_LocalOpenAI(t *testing.T) {
 		isCooldown:       func(m string) bool { return false },
 		isExcluded:       func(m string) bool { return false },
 		models: []openRouterModel{
-			{ID: "small/free:free", Pricing: struct {
+			{ID: freeOR, Pricing: struct {
 				Prompt     string `json:"prompt"`
 				Completion string `json:"completion"`
 			}{Prompt: "0", Completion: "0"}},
@@ -197,7 +212,7 @@ func TestSelectCandidates_LocalOpenAI(t *testing.T) {
 	}
 	off := selectCandidates(ctx)
 	for _, c := range off {
-		if c == "local/qwen3-coder" {
+		if c == localGPU {
 			t.Fatalf("expected local OpenAI ids omitted without flag, got %v", off)
 		}
 	}
@@ -207,7 +222,168 @@ func TestSelectCandidates_LocalOpenAI(t *testing.T) {
 	if len(on) == 0 {
 		t.Fatal("expected candidates")
 	}
-	if on[len(on)-1] != "local/qwen3-coder" {
-		t.Fatalf("expected local model last, got %v", on)
+	if on[len(on)-1] != localGPU {
+		t.Fatalf("expected local model last (fallback) when enabled, got %v", on)
+	}
+	if on[0] == localGPU {
+		t.Fatalf("local must not be first candidate (cloud-first policy), got %v", on)
+	}
+}
+
+func TestIsBlockedSmallCloudWhenLocalGPU(t *testing.T) {
+	const (
+		localGPU     = "local/test-gpu"
+		blockTarget  = "test/block-target"
+		nanoPattern  = "test/vendor-nano-8b"
+	)
+	prevAllow := allowLocalOpenAI
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		allowLocalOpenAI = prevAllow
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	configMutex.Lock()
+	globalModelsConfig = modelsConfig{
+		LocalOpenAI: []localOpenAIModel{
+			{ID: localGPU, Endpoint: "http://127.0.0.1:8080", Model: "upstream"},
+		},
+		BlockSmallCloudWhenLocalGPU: blockSmallCloudWhenLocalGPUConfig{
+			Models:   []string{blockTarget},
+			Patterns: []string{"nano"},
+		},
+	}
+	configMutex.Unlock()
+	allowLocalOpenAI = true
+
+	if !isBlockedSmallCloudWhenLocalGPU(blockTarget) {
+		t.Error("expected explicit block list entry to block")
+	}
+	if !isBlockedSmallCloudWhenLocalGPU(nanoPattern) {
+		t.Error("expected pattern 'nano' to block")
+	}
+	if isBlockedSmallCloudWhenLocalGPU(localGPU) {
+		t.Error("local route id should not be blocked")
+	}
+	if !isCandidateExcluded(blockTarget) {
+		t.Error("isCandidateExcluded should include local-GPU block")
+	}
+
+	allowLocalOpenAI = false
+	if isBlockedSmallCloudWhenLocalGPU(blockTarget) {
+		t.Error("block list inactive without --allow-local-openai")
+	}
+}
+
+func TestSelectCandidates_LocalGPUBlocksSmallCloud(t *testing.T) {
+	const (
+		cbSmall  = "cerebras/small"
+		cbLarge  = "cerebras/large-120b"
+		localGPU = "local/test-gpu"
+	)
+	prevAllow := allowLocalOpenAI
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		allowLocalOpenAI = prevAllow
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	conf := modelsConfig{
+		CerebrasBudget: []string{"cerebras/small", "cerebras/large-120b"},
+		LocalOpenAI: []localOpenAIModel{
+			{ID: localGPU, Endpoint: "http://127.0.0.1:8080", Model: "upstream"},
+		},
+		BlockSmallCloudWhenLocalGPU: blockSmallCloudWhenLocalGPUConfig{
+			Models:   []string{cbSmall},
+			Patterns: []string{"nano"},
+		},
+	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
+	allowLocalOpenAI = true
+
+	ctx := candidateContext{
+		role:             "planner",
+		conf:             conf,
+		isComplexRequest: true,
+		allowLocalOpenAI: true,
+		allowPaid:        true,
+		isCooldown:       func(m string) bool { return false },
+		isExcluded:       isCandidateExcluded,
+		cerebrasModels: []cerebrasModel{
+			{ID: "small"},
+			{ID: "large-120b"},
+		},
+	}
+
+	candidates := selectCandidates(ctx)
+	if len(candidates) == 0 {
+		t.Fatal("expected candidates")
+	}
+	if candidates[0] == localGPU {
+		t.Fatalf("local must not be first (cloud-first), got %v", candidates)
+	}
+	if candidates[len(candidates)-1] != localGPU {
+		t.Fatalf("expected local last as fallback, got %v", candidates)
+	}
+	for _, c := range candidates {
+		if c == cbSmall {
+			t.Fatalf("small cerebras should be blocked in local GPU mode, got %v", candidates)
+		}
+	}
+}
+
+func TestSelectCandidates_PlannerKeepsLocalOpenAI(t *testing.T) {
+	const (
+		freeOR   = "test/free-or"
+		localGPU = "local/my-coder"
+	)
+	prevAllow := allowLocalOpenAI
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		allowLocalOpenAI = prevAllow
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	conf := modelsConfig{
+		ReliableFree: []string{freeOR},
+		LocalOpenAI: []localOpenAIModel{
+			{ID: localGPU, Endpoint: "http://127.0.0.1:8080", Model: "upstream-name"},
+		},
+	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
+	allowLocalOpenAI = true
+
+	ctx := candidateContext{
+		role:             "planner",
+		conf:             conf,
+		isComplexRequest: true,
+		allowLocalOpenAI: true,
+		isCooldown:       func(m string) bool { return false },
+		isExcluded:       isCandidateExcluded,
+		models: []openRouterModel{
+			{ID: freeOR},
+		},
+	}
+
+	candidates := selectCandidates(ctx)
+	foundLocal := false
+	for _, c := range candidates {
+		if c == localGPU {
+			foundLocal = true
+			break
+		}
+	}
+	if !foundLocal {
+		t.Fatalf("planner should retain localOpenAI id after massive filter, got %v", candidates)
 	}
 }

@@ -1,4 +1,4 @@
-# Freeride Proxy (v1.2.0)
+# Freeride Proxy (v1.3.0)
 
 A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **Cerebras**, **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
 
@@ -6,18 +6,24 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 
 ---
 
-## What's New (v1.2.0)
+## What's New (v1.3.0)
 
-- **Headless Agent Support**: Native integration with Gas Town's `gt-agent` — a lightweight one-shot worker that drains nudge queues, calls LLMs via this proxy, executes shell commands, and exits. No TUI, no tmux, no idle processes.
-- **NATS Transport**: Gas Town agents now communicate over NATS (port 4222) instead of tmux. Agents start as ephemeral processes, do their work, and exit cleanly.
-- **Proxy-Magic (Resilient Tool-Use)**: Intercepts conversational command mentions (e.g., "I will now run `gt hook`") and markdown code blocks, converting them into official tool calls. Enables autonomous tool-use for free-tier models that struggle with strict JSON tool APIs.
-- **Strict Cost Optimization**: Eliminated unintended paid fallbacks. If free models are exhausted, the proxy returns 503 rather than routing to paid models.
-- **Robust Tiered Selection**:
-  - **Tier 0**: Prioritizes **Cerebras** models for lightning-fast inference.
-  - **Tier 1**: Prioritizes the original requested model if confirmed free.
-  - **Tier 2**: Falls back to tool-capable NVIDIA NIM models (highly reliable and fast).
-  - **Tier 3**: Falls back to reliable OpenRouter free models.
-  - **Tier 4**: Accesses high-end cloud models via **Ollama Cloud** (using the `ollama/` prefix).
+- **Cloud-first local GPU**: With `--allow-local-openai`, capable cloud models (70B NVIDIA, OpenRouter free tiers, large Cerebras, etc.) are tried first; `localOpenAI` (llama-server on `:8080`) is **last-resort fallback** only when cloud routes fail or are in cooldown.
+- **Weak-cloud blocking**: `blockSmallCloudWhenLocalGPU` in `models.yaml` skips nano/mini/8B cloud models when local GPU mode is on — so fallback does not mean “downgrade to 8B.”
+- **Config-only model IDs**: Routing lists, role prepends, compat model stubs, and score boosts live in `models.yaml` — not hardcoded in Go.
+- **Request sanitization**: Anthropic `tools` / `system` payloads are normalized before upstream forwarding (`sanitizeBody`).
+- **Faster default tests**: `go test .` runs unit and in-process httptest suites; live proxy tests require `FREERIDE_INTEGRATION=1`.
+
+Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extraction, strict zero-cost mode (503 when free tier exhausted).
+
+### Routing order (summary)
+
+1. Cerebras budget / performance (from `models.yaml`)
+2. Role prepends (`rolePrepend`, when `--allow-paid`)
+3. Reliable free + NVIDIA lists, Ollama cloud, original model
+4. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
+5. IDE bridges (`--allow-ide`)
+6. **Local llama-server** (`localOpenAI`, `--allow-local-openai`) — **after** capable cloud
 
 ---
 
@@ -35,7 +41,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 
 1. Build:
    ```bash
-   go build -o freeride main.go
+   go build -o freeride .
    ```
 
 2. Configure your keys in a `.env` file:
@@ -46,9 +52,9 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
    CEREBRAS_API_KEY=csk-...
    ```
 
-3. Run:
+3. Run (add `--allow-local-openai` if you use `localOpenAI` in `models.yaml`):
    ```bash
-   ./freeride --debug > freeride_live.log 2>&1 &
+   ./freeride --debug --allow-local-openai > freeride_live.log 2>&1 &
    ```
 
 4. Test:
@@ -61,7 +67,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 - `--debug`: Verbose logging of requests, routing decisions, and API responses.
 - `--allow-paid`: Allows paid models as fallback. **Disabled by default** (strict zero-cost mode).
 - `--allow-ide`: Allows `ideModels` entries in `models.yaml` (local IDE bridges) as a last-resort fallback. **Disabled by default**.
-- `--allow-local-openai`: Allows `localOpenAI` entries in `models.yaml` (for example [llama.cpp](https://github.com/ggerganov/llama.cpp) `llama-server` speaking the OpenAI HTTP API) as a last-resort fallback after cloud routes are exhausted. **Disabled by default**.
+- `--allow-local-openai`: Enables `localOpenAI` fallback (after capable cloud) and applies `blockSmallCloudWhenLocalGPU` from `models.yaml`. **Disabled by default**. Does **not** force local over cloud — keep Gas Town `LLM_MODEL` on a strong cloud id (e.g. `meta/llama-3.3-70b-instruct`).
 
 ---
 
@@ -221,10 +227,43 @@ ps aux | grep opencode | grep -v grep
 
 ## Model Configuration
 
-Edit `models.yaml` to control which models the proxy uses:
+**All model IDs and routing policy are in `models.yaml`** — edit that file to add/remove models, role overrides, or local GPU settings. Go code only implements tier logic and provider prefixes.
+
+### Local llama-server (optional)
+
+Typical setup with [llama.cpp](https://github.com/ggerganov/llama.cpp) `llama-server` on port `8080`:
+
+```bash
+# Terminal 1 — llama-server (example)
+cd ~/dev/llama.cpp/build/bin
+./llama-server --hf-repo unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF \
+  --hf-file Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf \
+  -ngl 30 --no-mmap -c 8192 -fa on --host 0.0.0.0 --port 8080
+
+# Get the upstream JSON model name (not the GGUF filename):
+curl -s http://127.0.0.1:8080/v1/models | jq -r '.data[0].id'
+```
+
+In `models.yaml`, `localOpenAI.id` is the route name clients may use; `localOpenAI.model` must match the server's `/v1/models` id:
+
+```yaml
+localOpenAI:
+  - id: "local/qwen3-coder-30b"
+    endpoint: "http://127.0.0.1:8080"
+    model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"  # from curl above
+    cooldown: "30m"
+```
+
+Run Freeride with `./freeride --debug --allow-local-openai`. Traffic uses cloud first; local GPU only when cloud is unavailable or cooled down.
+
+### Example `models.yaml` (abbreviated)
 
 ```yaml
 # Freeride Model Configuration
+
+massiveOnlyRoles: [architect, mayor, planner, polecat]
+rolePrepend:
+  polecat: ["anthropic/claude-3.5-sonnet"]  # only with --allow-paid
 
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
@@ -259,19 +298,12 @@ curatedPaid:
 excludeModels:
   - "google/gemma-4-26b-a4b-it:free" # Currently broken 401
 
-# Optional: local OpenAI-compatible HTTP server (e.g. llama-server on :8080).
-# Requires ./freeride --allow-local-openai. Tried after cloud (and optional IDE) fallbacks.
-# - id: stable name for this route (also used in cooldowns.json).
-# - endpoint: base URL only (no /v1 path); the proxy appends /v1/chat/completions.
-# - model: exact JSON "model" string the upstream server expects.
-# - cooldown / apiKeyEnv: optional; see models.yaml comments in the repo.
-localOpenAI:
-  - id: "local/qwen3-coder"
-    endpoint: "http://127.0.0.1:8080"
-    model: "qwen3-coder"
-```
+blockSmallCloudWhenLocalGPU:
+  models: ["cerebras/llama3.1-8b", ...]
+  patterns: ["nano", "mini", "-8b", ...]
 
-Use `localOpenAI: []` if you do not run a local server; uncomment or add entries when you do. Run **`go test -run TestHandleChatCompletions_LocalOpenAI`** to exercise the proxy-to-upstream path against a mock server (no real GPU required).
+localOpenAI: []   # or see local llama-server section above
+```
 
 **Verified working models (NVIDIA):**
 - `meta/llama-3.3-70b-instruct` ✅
@@ -285,7 +317,7 @@ The proxy auto-discovers models from OpenRouter, NVIDIA, and Ollama Cloud, but `
 
 ## Power Model Spoofing (Tool Support)
 
-Freeride automatically advertises `claude-3-5-sonnet-20241022` and `gpt-4o` at the top of its model list. **Always select these names** in your client configuration. Even though the proxy routes to a **free model** (like Llama 3.3 70B), using these names tricks clients into enabling their full suite of tools which are normally disabled for smaller models.
+Freeride advertises compat model ids from `compatModels` in `models.yaml` (defaults include `claude-3-5-sonnet-20241022` and `gpt-4o`). **Select those names** in clients that gate tools by model name. The proxy still routes to free or configured backends under the hood.
 
 ---
 
@@ -323,16 +355,29 @@ This mechanism ensures that the **Gas Town** agent ecosystem remains fully auton
 
 ## Testing
 
-A comprehensive integration test suite is included in `proxy_test.go`:
+### Default (fast, no live proxy)
 
 ```bash
-go test -v proxy_test.go main.go
+go test . -v -count=1
 ```
 
-Validates:
-- **SSE Streaming**: Full protocol translation.
-- **Tool Translation**: JSON schema mapping and tool-use lifecycle.
-- **Model Discovery**: Fetches, caches, and routes models from both OpenRouter and NVIDIA.
+Runs in milliseconds:
+- **`candidate_test.go`** — cloud-first candidate order, local last, weak-cloud blocking
+- **`local_openai_test.go`** — local route hits upstream, maps `model` field
+- **`proxy_protocol_test.go`** — Anthropic tools, large system prompts, role routing (httptest mocks)
+
+### Live integration (optional)
+
+Requires Freeride listening (default `http://localhost:11434`):
+
+```bash
+./freeride --debug --allow-local-openai &
+FREERIDE_INTEGRATION=1 go test . -v -count=1
+```
+
+Optional: `FREERIDE_TEST_URL=http://localhost:11434`
+
+Live tests in `proxy_test.go` are skipped without `FREERIDE_INTEGRATION=1` so CI and offline runs stay fast. They may also skip if all cloud models are in cooldown (see `cooldowns.json`).
 
 ---
 
