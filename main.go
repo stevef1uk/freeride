@@ -2935,6 +2935,14 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 func selectCandidates(ctx candidateContext) []string {
 	var candidates []string
 
+	// Gas Town roles with a NVIDIA NIM model: try requested model first (zero-cost, skip waterfall).
+	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
+		om := strings.ToLower(ctx.originalModel)
+		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") {
+			candidates = append(candidates, ctx.originalModel)
+		}
+	}
+
 	// Tier 0.1: Cerebras Budget Models (Free Previews / Ultra-cheap 8B)
 	for _, cid := range ctx.conf.CerebrasBudget {
 		if !ctx.isCooldown(cid) && !ctx.isExcluded(cid) {
@@ -2991,10 +2999,12 @@ func selectCandidates(ctx candidateContext) []string {
 
 	// Tier 0.6: Reliable Models (Always preferred for Gas Town)
 	if ctx.role != "" {
-		for _, m := range ctx.ollamaModels {
-			modelName := "ollama/" + m.Name
-			if isMassiveModel(modelName) && !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
-				candidates = append(candidates, modelName)
+		for _, nid := range ctx.conf.NvidiaReliable {
+			if roleRequiresMassiveModel(ctx.role) && !isMassiveModel(nid) {
+				continue
+			}
+			if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
+				candidates = append(candidates, nid)
 			}
 		}
 		for _, fid := range ctx.conf.ReliableFree {
@@ -3005,12 +3015,10 @@ func selectCandidates(ctx candidateContext) []string {
 				candidates = append(candidates, fid)
 			}
 		}
-		for _, nid := range ctx.conf.NvidiaReliable {
-			if roleRequiresMassiveModel(ctx.role) && !isMassiveModel(nid) {
-				continue
-			}
-			if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
-				candidates = append(candidates, nid)
+		for _, m := range ctx.ollamaModels {
+			modelName := "ollama/" + m.Name
+			if isMassiveModel(modelName) && !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
+				candidates = append(candidates, modelName)
 			}
 		}
 	}

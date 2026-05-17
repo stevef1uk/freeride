@@ -67,21 +67,22 @@ reliableFree:
   - "qwen/qwen3-coder:free"
   - "meta-llama/llama-3.3-70b-instruct:free"
 
-# Priority 2: Reliable NVIDIA models (zero-cost, high performance)
-# For complex agent tasks (multi-step reasoning, tool use), prefer 70B models.
-# For simple tasks, 11B is faster and cheaper.
+# Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
+# 70b/nemotron-super for agents; 11b for lighter tasks.
 nvidiaReliable:
+  - "nvidia/llama-3.3-nemotron-super-49b-v1"
+  - "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  - "nvidia/nemotron-3-super-120b-a12b"
   - "meta/llama-3.3-70b-instruct"
-  - "nvidia/llama-3.1-nemotron-70b-instruct"
-  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"
   - "meta/llama-3.2-11b-vision-instruct"
 
 # Priority 2.5: Complex-task NVIDIA models (always tried first for complex requests)
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
+  - "nvidia/llama-3.3-nemotron-super-49b-v1"
+  - "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  - "nvidia/nemotron-3-super-120b-a12b"
   - "meta/llama-3.3-70b-instruct"
-  - "nvidia/llama-3.1-nemotron-70b-instruct"
-  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"
 
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
@@ -94,6 +95,8 @@ excludeModels:
   - "google/gemma-4-26b-a4b-it:free"      # Currently broken 401
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
+  - "nvidia/llama-3.1-nemotron-70b-instruct"   # listed in /v1/models but chat 404
+  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"  # chat 404 for this account
   - "meta-llama/llama-3.2-1b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-3b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-1b-instruct"      # TOO SMALL
