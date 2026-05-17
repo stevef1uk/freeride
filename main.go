@@ -953,7 +953,11 @@ func isMassiveModel(modelName string) bool {
 		strings.Contains(lower, "90b") ||
 		strings.Contains(lower, "80b") ||
 		strings.Contains(lower, "70b") ||
-		strings.Contains(lower, "30b")
+		strings.Contains(lower, "30b") ||
+		strings.Contains(lower, "sonnet") ||
+		strings.Contains(lower, "gpt-4") ||
+		strings.Contains(lower, "gemini") ||
+		strings.Contains(lower, "opus")
 }
 
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {

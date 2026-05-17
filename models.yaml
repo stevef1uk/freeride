@@ -9,6 +9,10 @@ massiveOnlyRoles:
 rolePrepend:
   polecat:
     - "anthropic/claude-3.5-sonnet"
+  planner:
+    - "anthropic/claude-3.5-sonnet"
+  architect:
+    - "anthropic/claude-3.5-sonnet"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
