@@ -44,13 +44,18 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
    go build -o freeride .
    ```
 
-2. Configure your keys in a `.env` file:
+2. Configure API keys in a `.env` file in the directory where you start Freeride:
+   ```bash
+   cp .env.template .env
+   # edit .env — set keys for the providers you use in models.yaml
+   ```
    ```env
    OPENROUTER_API_KEY=sk-or-v1-...
    NVIDIA_API_KEY=nvapi-...
    OLLAMA_API_KEY=1b18...
    CEREBRAS_API_KEY=csk-...
    ```
+   On startup, Freeride reads `.env` from the **current working directory** (`KEY=value` lines; `#` comments are ignored). You can use shell exports instead if you prefer.
 
 3. Run (add `--allow-local-openai` if you use `localOpenAI` in `models.yaml`):
    ```bash
@@ -95,6 +100,8 @@ Point any client that supports OpenAI-compatible endpoints to:
 ## Gas Town Integration
 
 Freeride serves as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration. The proxy runs on `:11434`; agents communicate via NATS on `:4222`.
+
+**Freeride `.env`:** Gas Town `gt-agent` sessions only need `LLM_ENDPOINT` / `LLM_MODEL` in `settings/config.json` (see below). Provider API keys live in **Freeride’s** `.env` — start the proxy from your Freeride repo (or any directory that contains a `.env` with `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, etc.). `gt install` does not create this file; copy `.env.template` → `.env` in the Freeride tree before `gt up`.
 
 ### Architecture Overview
 
@@ -174,7 +181,10 @@ Create or update `settings/config.json` in your Gas Town project root:
 ### Running Gas Town
 
 ```bash
-# 1. Ensure Freeride proxy is running
+# 0. Ensure Freeride has API keys (.env in the directory you start it from)
+cp .env.template .env   # once, in the freeride repo; edit with your keys
+
+# 1. Ensure Freeride proxy is running (from that repo so .env is loaded)
 ./freeride --debug > freeride_live.log 2>&1 &
 
 # 2. Ensure NATS is available (Docker or standalone)
