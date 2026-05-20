@@ -35,6 +35,46 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
 - An **NVIDIA API key** (for highest-performance free NIM models)
 - An **Ollama API key** (for Ollama Cloud models like Qwen3 480B and DeepSeek V4)
 
+## Cloning freeride (Gas Town submodule)
+
+This repository includes **[Gas Town](https://github.com/gastownhall/gastown)** as a **git submodule** at [`gastown/`](gastown/). The submodule is pinned to the [stevef1uk/gastown](https://github.com/stevef1uk/gastown) fork (see [`.gitmodules`](.gitmodules)).
+
+A plain `git clone` **does not** download submodule contents — `gastown/` will be empty until you initialize it.
+
+### First-time clone (recommended)
+
+```bash
+git clone --recurse-submodules https://github.com/stevef1uk/freeride.git
+cd freeride
+```
+
+### Already cloned without submodules
+
+From the freeride repo root:
+
+```bash
+git submodule update --init --recursive
+```
+
+### Verify and install Gas Town binaries
+
+```bash
+test -f gastown/go.mod && echo "gastown submodule OK"
+
+cd gastown
+make install    # builds gt, gt-agent, … → ~/.local/bin
+```
+
+Ensure `~/.local/bin` is on your `PATH`. After you change the submodule commit or pull freeride updates, refresh the submodule and reinstall:
+
+```bash
+git pull
+git submodule update --init --recursive
+cd gastown && git pull && make install
+```
+
+**Town root (`~/gt`)** is separate: create it with `gt install` / `gt rig add` per Gas Town docs. Freeride only supplies the proxy; the submodule supplies the `gt` and `gt-agent` binaries and orchestrator templates synced by `make install`.
+
 ## Building and Running
 
 ### Standalone Use
@@ -100,6 +140,8 @@ Point any client that supports OpenAI-compatible endpoints to:
 ## Gas Town Integration
 
 Freeride serves as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration. The proxy runs on `:11434`; agents communicate via NATS on `:4222`.
+
+**Submodule required:** Install the `gastown/` tree first — see [Cloning freeride (Gas Town submodule)](#cloning-freeride-gas-town-submodule) above (`git clone --recurse-submodules` or `git submodule update --init --recursive`, then `cd gastown && make install`).
 
 **Freeride `.env`:** Gas Town `gt-agent` sessions only need `LLM_ENDPOINT` / `LLM_MODEL` in `settings/config.json` (see below). Provider API keys live in **Freeride’s** `.env` — start the proxy from your Freeride repo (or any directory that contains a `.env` with `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, etc.). `gt install` does not create this file; copy `.env.template` → `.env` in the Freeride tree before `gt up`.
 
@@ -181,22 +223,26 @@ Create or update `settings/config.json` in your Gas Town project root:
 ### Running Gas Town
 
 ```bash
-# 0. Ensure Freeride has API keys (.env in the directory you start it from)
+# 0. Gas Town CLI from the submodule (once per machine / after submodule updates)
+git submodule update --init --recursive
+cd gastown && make install && cd ..
+
+# 1. Ensure Freeride has API keys (.env in the directory you start it from)
 cp .env.template .env   # once, in the freeride repo; edit with your keys
 
-# 1. Ensure Freeride proxy is running (from that repo so .env is loaded)
+# 2. Ensure Freeride proxy is running (from that repo so .env is loaded)
 ./freeride --debug > freeride_live.log 2>&1 &
 
-# 2. Ensure NATS is available (Docker or standalone)
+# 3. Ensure NATS is available (Docker or standalone)
 # Docker: docker run -d --name gt-nats -p 4222:4222 nats:latest
 
-# 3. Start Gas Town services
+# 4. Start Gas Town services (from your town root, e.g. ~/gt)
 gt up
 
-# 4. Check status
+# 5. Check status
 gt status
 
-# 5. Assign work to a polecat (automatic via Mayor, or manual)
+# 6. Assign work to a polecat (automatic via Mayor, or manual)
 gt hook de-123 defender/polecats/obsidian
 ```
 
