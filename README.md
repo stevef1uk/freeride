@@ -246,6 +246,71 @@ gt status
 gt hook de-123 defender/polecats/obsidian
 ```
 
+### Orchestrator (rig-flow pipeline)
+
+For **structured rig delivery** (SPEC → design → plan → implement → QA), Gas Town runs a central workflow FSM (`rig-flow`) instead of each agent self-dispatching via hooks and mail. Agents use **NATS** sessions with `gt-agent --orchestrated`; there is no tmux requirement when `session_transport` is `"nats"`.
+
+Full documentation lives in the **gastown** submodule:
+
+- [Orchestrator (concept)](gastown/docs/concepts/orchestrator.md) — quickstart, QA outcomes, reset
+- [rig-flow operator notes](gastown/internal/orchestrator/town/README.md) — YAML hooks, timeouts, stall recovery
+- [Orchestrator (design)](gastown/docs/design/orchestrator.md) — implementation detail
+
+**Town root** (`~/gt` or your `GT_ROOT`) is separate from this freeride repo. After submodule install, sync templates into the town:
+
+```bash
+cd gastown && make install          # builds gt, gt-agent; copies orchestrator/templates + prompts
+cd ~/gt                             # your town root
+gt orchestrator sync --update-changed
+```
+
+**Bring up services and the orchestrator MCP process** (`gt up` starts NATS, daemon, and `gt orchestrator run`; PID in `daemon/orchestrator.pid`):
+
+```bash
+./freeride --debug > freeride_live.log 2>&1 &   # from freeride repo (API keys in .env)
+cd ~/gt
+gt up
+gt orchestrator status    # running PID + MCP ping
+gt status -v              # NATS sessions (e.g. te-<rig>-polecat), not tmux
+```
+
+**Start a rig pipeline** (example rig `testgt3`):
+
+```bash
+gt mayor workflow start rig-flow --rig testgt3
+gt mayor workflow status
+```
+
+**Rig agents only when a workflow is running** — use orchestrator-only mode to skip legacy town `hq-architect` / `hq-qa` / `hq-polecat`:
+
+```bash
+gt up --orchestrator-only
+```
+
+Per-rig pipeline sessions (NATS) include `te-<rig>-polecat`, `te-<rig>-architect`, `te-<rig>-qa`, plus town `hq-planner` / `hq-setup` for planning and project setup. Tail logs under `~/gt/<rig>/polecat/typescript`, etc. (see the concept doc table).
+
+**Incremental bug fixes:** For existing source files, the polecat must use **`sed -i`** or **`patch`** (not full-file `cat > … <<'EOF'` rewrites). gt-agent enforces this automatically when the file is already on disk; new files still use heredoc.
+
+**Parked rigs do not start agents.** If `gt up` reports `skipped (rig parked)`, the rig was intentionally paused:
+
+```bash
+gt rig status testgt3
+gt rig unpark testgt3
+gt up --orchestrator-only
+# or: gt rig start testgt3
+```
+
+**Useful checks when work stalls:**
+
+```bash
+gt orchestrator status
+gt mayor workflow status
+export BEADS_DIR=~/gt/testgt3/.beads && cd ~/gt/testgt3/mayor/rig && bd list --status=in_progress
+tail -f ~/gt/logs/orchestrator.log
+```
+
+**Full rig rewind** (beads, instances, dev servers): `bash gastown/scripts/reset-rig-orchestrator.sh --force` from a checkout that includes the submodule (see gastown script header for `GT_ROOT` / `RIG`).
+
 ### Verification
 
 #### Check the proxy is running:
