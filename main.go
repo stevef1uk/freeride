@@ -73,6 +73,7 @@ type blockSmallCloudWhenLocalGPUConfig struct {
 type modelsConfig struct {
 	CerebrasBudget              []string                          `yaml:"cerebrasBudget"`
 	CerebrasPerformance         []string                          `yaml:"cerebrasPerformance"`
+	GeminiModels                []geminiModel                     `yaml:"geminiModels"`
 	ReliableFree                []string                          `yaml:"reliableFree"`
 	NvidiaReliable              []string                          `yaml:"nvidiaReliable"`
 	NvidiaComplex               []string                          `yaml:"nvidiaComplex"`
@@ -110,9 +111,16 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d local-GPU block ids, %d local-GPU block patterns from config",
-		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
+	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d local-GPU block ids, %d local-GPU block patterns from config",
+		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.GeminiModels), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
 		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
+	if len(globalModelsConfig.GeminiModels) > 0 {
+		if resolveGeminiAPIKey() == "" {
+			log.Printf("[WARN] geminiModels configured but GEMINI_API_KEY (or GOOGLE_API_KEY) is unset — Gemini direct routes will be skipped")
+		} else {
+			log.Printf("[INFO] Gemini API direct routing enabled (%d model(s))", len(globalModelsConfig.GeminiModels))
+		}
+	}
 	// Do not call localGPUEnabled() here — it would RLock while we hold Lock (deadlock).
 	if allowLocalOpenAI && len(globalModelsConfig.LocalOpenAI) > 0 {
 		log.Printf("[INFO] Local GPU mode: %d localOpenAI fallback endpoint(s); small-cloud block list active", len(globalModelsConfig.LocalOpenAI))
@@ -351,6 +359,13 @@ func calculateModelCooldown(model string, errorCount int) time.Duration {
 		}
 	}
 	for _, m := range conf.LocalOpenAI {
+		if m.ID == model && m.Cooldown != "" {
+			if d, err := time.ParseDuration(m.Cooldown); err == nil {
+				return d
+			}
+		}
+	}
+	for _, m := range conf.GeminiModels {
 		if m.ID == model && m.Cooldown != "" {
 			if d, err := time.ParseDuration(m.Cooldown); err == nil {
 				return d
@@ -825,6 +840,22 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
+	if geminiDirectAvailable() {
+		for _, m := range globalModelsConfig.GeminiModels {
+			if m.ID == "" {
+				continue
+			}
+			ollamaModels = append(ollamaModels, ollamaModel{
+				Name:  m.ID,
+				Model: m.ID,
+				Details: ollamaModelDetails{
+					Format:   "gguf",
+					Family:   "gemini",
+					Families: []string{"gemini"},
+				},
+			})
+		}
+	}
 	configMutex.RUnlock()
 
 	resp := ollamaTagsResponse{Models: ollamaModels}
@@ -1066,7 +1097,20 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) {
 			candidates = append(candidates, toolCapableNvidia[0].ID)
 			log.Printf("[DEBUG] using NVIDIA tool-capable fallback: %s", toolCapableNvidia[0].ID)
-		} else if allowLocalOpenAI && len(conf.LocalOpenAI) > 0 {
+		} else if geminiDirectAvailable() {
+			for _, gm := range conf.GeminiModels {
+				if gm.ID == "" {
+					continue
+				}
+				if !isCooldown(gm.ID) && !isCandidateExcluded(gm.ID) {
+					candidates = append(candidates, gm.ID)
+				}
+			}
+			if len(candidates) > 0 {
+				log.Printf("[DEBUG] using Gemini API direct fallback candidates: %v", candidates)
+			}
+		}
+		if len(candidates) == 0 && allowLocalOpenAI && len(conf.LocalOpenAI) > 0 {
 			for _, lm := range conf.LocalOpenAI {
 				if lm.ID == "" {
 					continue
@@ -1075,15 +1119,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					candidates = append(candidates, lm.ID)
 				}
 			}
-			if len(candidates) == 0 {
-				log.Printf("[ERROR] All free models are in cooldown and no local OpenAI endpoint available: %s", originalModel)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
-				return
+			if len(candidates) > 0 {
+				log.Printf("[DEBUG] using local OpenAI fallback candidates: %v", candidates)
 			}
-			log.Printf("[DEBUG] using local OpenAI fallback candidates: %v", candidates)
-		} else {
+		}
+		if len(candidates) == 0 {
 			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -1114,6 +1154,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		isIDE := false
 		var localOpenAI *localOpenAIModel
+		var geminiDirect *geminiModel
+		if gm := lookupGeminiModel(candidate); gm != nil && geminiDirectAvailable() {
+			geminiDirect = gm
+		}
 		for _, m := range conf.IdeModels {
 			if m.ID == candidate {
 				isIDE = true
@@ -1140,11 +1184,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if !isIDE && localOpenAI == nil && geminiDirect != nil {
+			targetURL = geminiOpenAIBaseURL + "/chat/completions"
+			apiKey = resolveGeminiAPIKey()
+		}
 
-		directOpenAIEndpoint := isIDE || localOpenAI != nil
+		directOpenAIEndpoint := isIDE || localOpenAI != nil || geminiDirect != nil
 
 		if directOpenAIEndpoint {
-			// No-op, targetURL already set
+			// targetURL and apiKey set above for IDE / localOpenAI / Gemini direct
 		} else if isCerebras {
 			targetURL = "https://api.cerebras.ai/v1/chat/completions"
 			apiKey = os.Getenv("CEREBRAS_API_KEY")
@@ -1206,6 +1254,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "cerebras/")
 			if localOpenAI != nil && localOpenAI.Model != "" {
 				currentBody["model"] = localOpenAI.Model
+			}
+			if geminiDirect != nil {
+				currentBody["model"] = geminiAPIModelName(geminiDirect, candidate)
 			}
 			sanitizeBody(currentBody)
 			outboundBody, _ = json.Marshal(currentBody)
@@ -1927,6 +1978,25 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 			OwnedBy:     "local-openai",
 		})
 	}
+	if geminiDirectAvailable() {
+		for _, m := range globalModelsConfig.GeminiModels {
+			if m.ID == "" {
+				continue
+			}
+			dn := m.Model
+			if dn == "" {
+				dn = m.ID
+			}
+			res.Data = append(res.Data, openAIModel{
+				ID:          m.ID,
+				Type:        "model",
+				Object:      "model",
+				DisplayName: dn,
+				Created:     time.Now().Unix(),
+				OwnedBy:     "google-gemini",
+			})
+		}
+	}
 	configMutex.RUnlock()
 
 	json.NewEncoder(w).Encode(res)
@@ -2193,7 +2263,6 @@ func sanitizeBody(body map[string]interface{}) {
 	model, _ := body["model"].(string)
 	isNvidiaModel := strings.HasPrefix(model, "nvidia/") ||
 		strings.HasPrefix(model, "meta/") ||
-		strings.HasPrefix(model, "google/") ||
 		strings.HasPrefix(model, "mistralai/") ||
 		strings.HasPrefix(model, "microsoft/") ||
 		strings.HasPrefix(model, "qwen/") ||
@@ -2950,6 +3019,18 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
+	// Tier 0.15: Google Gemini API free tier (requires GEMINI_API_KEY)
+	if geminiDirectEnabledFor(ctx.conf) {
+		for _, gm := range ctx.conf.GeminiModels {
+			if gm.ID == "" {
+				continue
+			}
+			if !ctx.isCooldown(gm.ID) && !ctx.isExcluded(gm.ID) {
+				candidates = append(candidates, gm.ID)
+			}
+		}
+	}
+
 	// Tier 0.2: Cerebras Performance Models (Only for complex requests AND if paid is allowed)
 	if ctx.isComplexRequest && ctx.allowPaid {
 		for _, cid := range ctx.conf.CerebrasPerformance {
@@ -3049,6 +3130,9 @@ func selectCandidates(ctx candidateContext) []string {
 						break
 					}
 				}
+			}
+			if !isOriginalFree && geminiDirectEnabledFor(ctx.conf) && lookupGeminiModel(ctx.originalModel) != nil {
+				isOriginalFree = true
 			}
 			lowerOrig := strings.ToLower(ctx.originalModel)
 			isOriginalWeak = strings.Contains(lowerOrig, "-1b-") ||

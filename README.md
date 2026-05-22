@@ -1,6 +1,6 @@
 # Freeride Proxy (v1.3.0)
 
-A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **Cerebras**, **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
+A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **Google Gemini API**, **Cerebras**, **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
 
 Use it **standalone** with any OpenAI-compatible client, or as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration.
 
@@ -12,18 +12,21 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 - **Weak-cloud blocking**: `blockSmallCloudWhenLocalGPU` in `models.yaml` skips nano/mini/8B cloud models when local GPU mode is on — so fallback does not mean “downgrade to 8B.”
 - **Config-only model IDs**: Routing lists, role prepends, compat model stubs, and score boosts live in `models.yaml` — not hardcoded in Go.
 - **Request sanitization**: Anthropic `tools` / `system` payloads are normalized before upstream forwarding (`sanitizeBody`).
-- **Faster default tests**: `go test .` runs unit and in-process httptest suites; live proxy tests require `FREERIDE_INTEGRATION=1`.
+- **Faster default tests**: `go test ./...` runs unit and in-process httptest suites (including Gemini direct routing tests); live proxy tests require `FREERIDE_INTEGRATION=1`. The `scratch/` tree is dev-only (`//go:build ignore`) and is not part of the test run.
+
+- **Google Gemini API (direct)**: Free-tier Flash models via `GEMINI_API_KEY` and `geminiModels` in `models.yaml` — no OpenRouter markup. Gas Town **polecat** defaults to `gt-agent-gemini` (`google/gemini-3.5-flash`).
 
 Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extraction, strict zero-cost mode (503 when free tier exhausted).
 
 ### Routing order (summary)
 
 1. Cerebras budget / performance (from `models.yaml`)
-2. Role prepends (`rolePrepend`, when `--allow-paid`)
-3. Reliable free + NVIDIA lists, Ollama cloud, original model
-4. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
-5. IDE bridges (`--allow-ide`)
-6. **Local llama-server** (`localOpenAI`, `--allow-local-openai`) — **after** capable cloud
+2. **Gemini API direct** (`geminiModels` in `models.yaml`, requires `GEMINI_API_KEY`)
+3. Role prepends (`rolePrepend`, when `--allow-paid`)
+4. Reliable free + NVIDIA lists, Ollama cloud, original model
+5. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
+6. IDE bridges (`--allow-ide`)
+7. **Local llama-server** (`localOpenAI`, `--allow-local-openai`) — **after** capable cloud
 
 ---
 
@@ -31,6 +34,7 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
 
 - Go 1.18+ (for building from source)
 - A **Cerebras API key** (Optional, for fastest inference)
+- A **Gemini API key** (optional, for free Google Flash models via `geminiModels` in `models.yaml`)
 - An **OpenRouter API key** (for free OpenRouter models)
 - An **NVIDIA API key** (for highest-performance free NIM models)
 - An **Ollama API key** (for Ollama Cloud models like Qwen3 480B and DeepSeek V4)
@@ -91,6 +95,7 @@ cd gastown && git pull && make install
    ```
    ```env
    OPENROUTER_API_KEY=sk-or-v1-...
+   GEMINI_API_KEY=...          # from https://aistudio.google.com/apikey
    NVIDIA_API_KEY=nvapi-...
    OLLAMA_API_KEY=1b18...
    CEREBRAS_API_KEY=csk-...
@@ -113,6 +118,106 @@ cd gastown && git pull && make install
 - `--allow-paid`: Allows paid models as fallback. **Disabled by default** (strict zero-cost mode).
 - `--allow-ide`: Allows `ideModels` entries in `models.yaml` (local IDE bridges) as a last-resort fallback. **Disabled by default**.
 - `--allow-local-openai`: Enables `localOpenAI` fallback (after capable cloud) and applies `blockSmallCloudWhenLocalGPU` from `models.yaml`. **Disabled by default**. Does **not** force local over cloud — keep Gas Town `LLM_MODEL` on a strong cloud id (e.g. `meta/llama-3.3-70b-instruct`).
+
+---
+
+## Google Gemini API (direct)
+
+Freeride can call **Google’s Gemini API** directly using its [OpenAI-compatible endpoint](https://ai.google.dev/gemini-api/docs/openai). This is separate from OpenRouter’s `google/*` models: traffic goes to `generativelanguage.googleapis.com`, uses your **AI Studio** key, and qualifies for Google’s **free tier** (rate-limited; see [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)).
+
+OpenRouter no longer offers free Gemini Flash tiers; direct routing is the practical way to use Flash at zero token cost.
+
+### Setup
+
+1. Create an API key at [Google AI Studio](https://aistudio.google.com/apikey).
+2. Add to Freeride’s `.env` (repo root, same directory you start `./freeride` from):
+
+   ```env
+   GEMINI_API_KEY=your-key-here
+   ```
+
+   `GOOGLE_API_KEY` is also accepted. Freeride trims whitespace around `=` (bash `source .env` does not — use `KEY=value` with no space after `=` if you source manually).
+
+3. Ensure `geminiModels` in `models.yaml` lists the routes you want (defaults ship in-repo):
+
+   ```yaml
+   geminiModels:
+     - id: "google/gemini-3.5-flash"      # Freeride / client model name
+       model: "gemini-3.5-flash"          # exact name sent to Google
+     - id: "google/gemini-2.5-flash-lite"
+       model: "gemini-2.5-flash-lite"
+   ```
+
+4. Restart Freeride. On startup you should see: `Gemini API direct routing enabled`.
+
+If the key is missing, Gemini routes are skipped (other providers still work).
+
+### How routing works
+
+| Concept | Value |
+|--------|--------|
+| Client / Gas Town model id | `google/gemini-3.5-flash` (from `geminiModels[].id`) |
+| Upstream API model | `gemini-3.5-flash` (from `geminiModels[].model`) |
+| Upstream URL | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` |
+| Candidate tier | **0.15** — after Cerebras budget, before OpenRouter/NVIDIA fallbacks |
+| Treated as “free” | Yes (for zero-cost mode; does not use OpenRouter pricing) |
+
+Freeride tries candidates in order; the first non-cooldown upstream success wins. If the client requests `google/gemini-3.5-flash`, that id is tried early (Tier 0 when configured and not in cooldown).
+
+**Role: polecat** — `polecat` is in `massiveOnlyRoles`; ids containing `gemini` pass the “massive model” filter. With default Gas Town config, polecat uses `gt-agent-gemini` so **`google/gemini-3.5-flash` is the primary model**, with Freeride fallbacks (e.g. `google/gemini-2.5-flash-lite`, then NVIDIA/OpenRouter 70B-class models) on errors or rate limits.
+
+**Role: architect / mayor / planner** — Gemini is still in the waterfall unless excluded; set `LLM_MODEL` to `google/gemini-3.5-flash` on the agent profile to prefer it.
+
+### Verify the key
+
+From the Freeride repo:
+
+```bash
+python3 scratch/test_gemini_key.py
+```
+
+Expect `PASS` lines for the configured models. A `400 API_KEY_INVALID` means regenerate the key in AI Studio; `429` means free-tier quota — wait or use fallbacks.
+
+Direct curl (replace `$GEMINI_API_KEY`):
+
+```bash
+curl -s "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" \
+  -H "Authorization: Bearer $GEMINI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini-3.5-flash","messages":[{"role":"user","content":"Say GEMINI_OK"}],"max_tokens":32}'
+```
+
+### Gas Town: `gt-agent-gemini`
+
+Fresh `gt install` maps **polecat → `gt-agent-gemini`** (`LLM_MODEL=google/gemini-3.5-flash`). See [Gas Town Integration](#gas-town-integration) for full `settings/config.json`. Existing towns must add the `gt-agent-gemini` agent block and set `"polecat": "gt-agent-gemini"` in `role_agents`, then restart polecat sessions.
+
+### Adding or changing models
+
+Edit `models.yaml` only — no Go changes required:
+
+```yaml
+geminiModels:
+  - id: "google/gemini-2.5-flash"   # what clients pass as model=
+    model: "gemini-2.5-flash"       # must match a Google API model id
+    cooldown: "30s"                 # optional per-model cooldown override
+```
+
+Use model ids from [Google’s model docs](https://ai.google.dev/gemini-api/docs/models). Not every id works on every account; test with `scratch/test_gemini_key.py` before relying on a route.
+
+### OpenRouter `google/*` vs direct
+
+| Path | Key | Example id | Cost |
+|------|-----|------------|------|
+| **Direct (`geminiModels`)** | `GEMINI_API_KEY` | `google/gemini-3.5-flash` | Free tier (Google limits) |
+| **OpenRouter** | `OPENROUTER_API_KEY` | `google/gemini-2.0-flash-001` | Paid per token (or `--allow-paid`) |
+
+Only ids listed under `geminiModels` use the direct API. Other `google/*` requests still go to OpenRouter.
+
+### Notes
+
+- **Thinking models**: `gemini-3.5-flash` may use internal reasoning tokens; use adequate `max_tokens` for short replies in tests.
+- **Tools**: Gemini supports tool-style requests; Freeride does not apply NVIDIA-style `tool_choice` stripping to direct Gemini routes.
+- **Discovery**: When the key is set, `google/gemini-*` ids appear on `/v1/models` and `/api/tags` with `owned_by: google-gemini`.
 
 ---
 
@@ -143,7 +248,7 @@ Freeride serves as the LLM backend for [Gas Town](https://github.com/gastownhall
 
 **Submodule required:** Install the `gastown/` tree first — see [Cloning freeride (Gas Town submodule)](#cloning-freeride-gas-town-submodule) above (`git clone --recurse-submodules` or `git submodule update --init --recursive`, then `cd gastown && make install`).
 
-**Freeride `.env`:** Gas Town `gt-agent` sessions only need `LLM_ENDPOINT` / `LLM_MODEL` in `settings/config.json` (see below). Provider API keys live in **Freeride’s** `.env` — start the proxy from your Freeride repo (or any directory that contains a `.env` with `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, etc.). `gt install` does not create this file; copy `.env.template` → `.env` in the Freeride tree before `gt up`.
+**Freeride `.env`:** Gas Town `gt-agent` sessions only need `LLM_ENDPOINT` / `LLM_MODEL` in `settings/config.json` (see below). Provider API keys live in **Freeride’s** `.env` — start the proxy from your Freeride repo (or any directory that contains a `.env` with `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, etc.). `gt install` does not create this file; copy `.env.template` → `.env` in the Freeride tree before `gt up`. Polecat implementation work expects **`GEMINI_API_KEY`** when using `gt-agent-gemini` (see [Google Gemini API](#google-gemini-api-direct)).
 
 ### Architecture Overview
 
@@ -162,6 +267,7 @@ Freeride serves as the LLM backend for [Gas Town](https://github.com/gastownhall
                                          │  Freeride Proxy │
                                          │  (port 11434)   │
                                          │  Routes to free │
+                                         │  Gemini/Cerebras│
                                          │  OpenRouter/NIM │
                                          └─────────────────┘
 ```
@@ -184,7 +290,7 @@ Create or update `settings/config.json` in your Gas Town project root:
   "session_transport": "nats",
   "default_agent": "gt-agent-local",
   "role_agents": {
-    "polecat": "gt-agent-local",
+    "polecat": "gt-agent-gemini",
     "mayor": "gt-agent-local",
     "deacon": "gt-agent-local",
     "witness": "gt-agent-local",
@@ -209,10 +315,20 @@ Create or update `settings/config.json` in your Gas Town project root:
         "LLM_ENDPOINT": "http://localhost:11434/v1/chat/completions",
         "LLM_MODEL": "meta/llama-3.2-11b-vision-instruct"
       }
+    },
+    "gt-agent-gemini": {
+      "command": "/home/YOURNAME/.local/bin/gt-agent",
+      "args": [],
+      "env": {
+        "LLM_ENDPOINT": "http://localhost:11434/v1/chat/completions",
+        "LLM_MODEL": "google/gemini-3.5-flash"
+      }
     }
   }
 }
 ```
+
+Fresh `gt install` defaults map **polecat → gt-agent-gemini** (`google/gemini-3.5-flash` via Freeride direct Gemini routing). Requires `GEMINI_API_KEY` in Freeride’s `.env` — see [Google Gemini API](#google-gemini-api-direct). Existing towns: set `"polecat": "gt-agent-gemini"` in `role_agents` and add the `gt-agent-gemini` agent block above (or re-merge from `DefaultFreerideAgents()` in `gastown/internal/config/freeride_agents.go`).
 
 **Key settings:**
 - `session_transport`: Set to `"nats"` for NATS-based session management (no tmux required)
@@ -386,6 +502,13 @@ massiveOnlyRoles: [architect, mayor, planner, polecat]
 rolePrepend:
   polecat: ["anthropic/claude-3.5-sonnet"]  # only with --allow-paid
 
+# Priority 0.15: Google Gemini API free tier (requires GEMINI_API_KEY)
+geminiModels:
+  - id: "google/gemini-3.5-flash"
+    model: "gemini-3.5-flash"
+  - id: "google/gemini-2.5-flash-lite"
+    model: "gemini-2.5-flash-lite"
+
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
   - "cerebras/llama3.1-8b"
@@ -398,9 +521,8 @@ cerebrasPerformance:
   - "cerebras/llama3.3-70b"
   - "cerebras/llama3.1-70b"
 
-# Priority 1: Specifically requested reliable free models
+# Priority 1: Specifically requested reliable free models (OpenRouter)
 reliableFree:
-  - "google/gemini-2.0-flash-exp:free"
   - "meta-llama/llama-3.3-70b-instruct:free"
   - "deepseek/deepseek-v3:free"
 
@@ -432,7 +554,7 @@ localOpenAI: []   # or see local llama-server section above
 - `ollama/qwen3-coder:480b` ✅
 - `ollama/deepseek-v4-pro` ✅
 
-The proxy auto-discovers models from OpenRouter, NVIDIA, and Ollama Cloud, but `models.yaml` prioritizes the listed models. Optional **`localOpenAI`** backends are not used unless you pass **`--allow-local-openai`**.
+The proxy auto-discovers models from OpenRouter, NVIDIA, and Ollama Cloud; **`geminiModels`** are listed when `GEMINI_API_KEY` is set. `models.yaml` prioritizes the listed models. Optional **`localOpenAI`** backends are not used unless you pass **`--allow-local-openai`**.
 
 ---
 
@@ -479,11 +601,12 @@ This mechanism ensures that the **Gas Town** agent ecosystem remains fully auton
 ### Default (fast, no live proxy)
 
 ```bash
-go test . -v -count=1
+go test ./... -v -count=1
 ```
 
 Runs in milliseconds:
 - **`candidate_test.go`** — cloud-first candidate order, local last, weak-cloud blocking
+- **`gemini_direct_test.go`** — Gemini API routing, polecat candidate order, `/api/tags` discovery, auth env keys
 - **`local_openai_test.go`** — local route hits upstream, maps `model` field
 - **`proxy_protocol_test.go`** — Anthropic tools, large system prompts, role routing (httptest mocks)
 

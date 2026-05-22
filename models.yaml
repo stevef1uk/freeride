@@ -16,8 +16,10 @@ rolePrepend:
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
-  - pattern: "gemini-2.0-flash-exp"
-    boost: 10.0
+  - pattern: "gemini-3.5-flash"
+    boost: 8.0
+  - pattern: "gemini-2.5-flash-lite"
+    boost: 4.0
   - pattern: "mistral-7b-instruct"
     boost: 1.0
 
@@ -49,6 +51,14 @@ compatModels:
 
 defaultResponseModel: "gpt-4o"
 anthropicResponseModel: "claude-3-5-sonnet-20241022"
+
+# Priority 0.15: Google Gemini API free tier (requires GEMINI_API_KEY in .env)
+# Routes to generativelanguage.googleapis.com OpenAI-compatible endpoint — not OpenRouter.
+geminiModels:
+  - id: "google/gemini-3.5-flash"
+    model: "gemini-3.5-flash"
+  - id: "google/gemini-2.5-flash-lite"
+    model: "gemini-2.5-flash-lite"
 
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
