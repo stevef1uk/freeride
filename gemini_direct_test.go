@@ -86,6 +86,50 @@ func TestGeminiDirectRouting_Isolated(t *testing.T) {
 	}
 }
 
+func TestSelectCandidates_PolecatWithLocalGPU_IncludesGemini(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	t.Cleanup(func() { _ = os.Unsetenv("GEMINI_API_KEY") })
+
+	prevAllow := allowLocalOpenAI
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		allowLocalOpenAI = prevAllow
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	conf := modelsConfig{
+		CerebrasBudget: []string{"cerebras/gpt-oss-120b"},
+		GeminiModels: []geminiModel{
+			{ID: "google/gemini-3.5-flash", Model: "gemini-3.5-flash"},
+		},
+		BlockSmallCloudWhenLocalGPU: blockSmallCloudWhenLocalGPUConfig{
+			Patterns: []string{"mini", "nano"},
+		},
+	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
+	allowLocalOpenAI = true
+
+	ctx := candidateContext{
+		role:             "polecat",
+		originalModel:    "google/gemini-3.5-flash",
+		conf:             conf,
+		isComplexRequest: true,
+		isCooldown:       func(string) bool { return false },
+		isExcluded:       isCandidateExcluded,
+	}
+	candidates := selectCandidates(ctx)
+	if len(candidates) == 0 {
+		t.Fatal("expected candidates for polecat")
+	}
+	if candidates[0] != "google/gemini-3.5-flash" {
+		t.Fatalf("first candidate: got %q want google/gemini-3.5-flash", candidates[0])
+	}
+}
+
 func TestSelectCandidates_GeminiWhenKeySet(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "test-key")
 	t.Cleanup(func() { _ = os.Unsetenv("GEMINI_API_KEY") })

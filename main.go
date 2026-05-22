@@ -174,8 +174,41 @@ func isLocalOpenAIModelID(id string) bool {
 	return false
 }
 
+func localGPUBlockPatternMatches(lowerModel, pattern string) bool {
+	pat := strings.ToLower(strings.TrimSpace(pattern))
+	if pat == "" {
+		return false
+	}
+	if !strings.Contains(lowerModel, pat) {
+		return false
+	}
+	// Short patterns like "mini" must not match inside unrelated tokens (e.g. "gemini" → "ini-" looks like "mini-").
+	if len(pat) <= 4 && !strings.Contains(pat, "-") && !strings.Contains(pat, "/") {
+		const seps = "-/_.:"
+		start := 0
+		for {
+			idx := strings.Index(lowerModel[start:], pat)
+			if idx < 0 {
+				return false
+			}
+			idx += start
+			beforeOK := idx == 0 || strings.ContainsRune(seps, rune(lowerModel[idx-1]))
+			end := idx + len(pat)
+			afterOK := end >= len(lowerModel) || strings.ContainsRune(seps, rune(lowerModel[end]))
+			if beforeOK && afterOK {
+				return true
+			}
+			start = idx + 1
+		}
+	}
+	return true
+}
+
 func isBlockedSmallCloudWhenLocalGPU(model string) bool {
 	if !localGPUEnabled() {
+		return false
+	}
+	if isGeminiDirectModelID(model) {
 		return false
 	}
 	configMutex.RLock()
@@ -187,8 +220,7 @@ func isBlockedSmallCloudWhenLocalGPU(model string) bool {
 		}
 	}
 	for _, pat := range globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns {
-		pat = strings.ToLower(strings.TrimSpace(pat))
-		if pat != "" && strings.Contains(lowerModel, pat) {
+		if localGPUBlockPatternMatches(lowerModel, pat) {
 			return true
 		}
 	}
@@ -3004,10 +3036,12 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 func selectCandidates(ctx candidateContext) []string {
 	var candidates []string
 
-	// Gas Town roles with a NVIDIA NIM model: try requested model first (zero-cost, skip waterfall).
+	// Gas Town roles: try requested NVIDIA/meta/Gemini model first (zero-cost, skip waterfall).
 	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
 		om := strings.ToLower(ctx.originalModel)
 		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") {
+			candidates = append(candidates, ctx.originalModel)
+		} else if strings.HasPrefix(om, "google/") && geminiDirectEnabledFor(ctx.conf) && lookupGeminiModel(ctx.originalModel) != nil {
 			candidates = append(candidates, ctx.originalModel)
 		}
 	}

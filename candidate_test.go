@@ -230,6 +230,15 @@ func TestSelectCandidates_LocalOpenAI(t *testing.T) {
 	}
 }
 
+func TestLocalGPUBlockPatternMatches_GeminiNotMini(t *testing.T) {
+	if localGPUBlockPatternMatches("google/gemini-3.5-flash", "mini") {
+		t.Fatal("pattern mini must not match gemini id")
+	}
+	if !localGPUBlockPatternMatches("nvidia/nemotron-mini-4b-instruct", "mini") {
+		t.Fatal("pattern mini should match nemotron-mini")
+	}
+}
+
 func TestIsBlockedSmallCloudWhenLocalGPU(t *testing.T) {
 	const (
 		localGPU     = "local/test-gpu"
@@ -252,7 +261,7 @@ func TestIsBlockedSmallCloudWhenLocalGPU(t *testing.T) {
 		},
 		BlockSmallCloudWhenLocalGPU: blockSmallCloudWhenLocalGPUConfig{
 			Models:   []string{blockTarget},
-			Patterns: []string{"nano"},
+			Patterns: []string{"nano", "mini"},
 		},
 	}
 	configMutex.Unlock()
@@ -263,6 +272,12 @@ func TestIsBlockedSmallCloudWhenLocalGPU(t *testing.T) {
 	}
 	if !isBlockedSmallCloudWhenLocalGPU(nanoPattern) {
 		t.Error("expected pattern 'nano' to block")
+	}
+	if isBlockedSmallCloudWhenLocalGPU("google/gemini-3.5-flash") {
+		t.Error("pattern 'mini' must not block gemini models (substring false positive)")
+	}
+	if !isBlockedSmallCloudWhenLocalGPU("nvidia/nemotron-mini-4b-instruct") {
+		t.Error("expected '-mini' style id to still block with pattern 'mini'")
 	}
 	if isBlockedSmallCloudWhenLocalGPU(localGPU) {
 		t.Error("local route id should not be blocked")
