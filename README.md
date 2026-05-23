@@ -464,6 +464,17 @@ When `goimports` is on `PATH`, gt-agent runs it on the **package** after native 
 go install golang.org/x/tools/cmd/goimports@latest
 ```
 
+#### Orchestrator git checkpoints (`GT_*` env)
+
+On each rig-flow FSM transition, **`gt orchestrator run`** may `git commit` dirty files in `{rig}/mayor/rig/`; on **`completed`** it **`git push`**es to `origin`. Polecat/QA do not push — the orchestrator does.
+
+| Variable | Where to set | Effect |
+|----------|----------------|--------|
+| `GT_SKIP_WORKFLOW_GIT_COMMIT=1` | Environment of **`gt orchestrator run`** (or parent of `gt up` auto-start) | No checkpoint commits |
+| `GT_WORKFLOW_SKIP_PUSH=1` | Same | Still commit locally; no push on `completed` |
+
+`gt rig add` / `gt rig add --adopt` append mayor/rig ignore rules (`.beads/`, `*.db`, `codeindex.json`, build `server`, QA progress JSON) so checkpoints stay source-only. For an existing rig: `gt rig add <name> --adopt` refreshes rules, then `git rm -r --cached` any junk still tracked. Details: `gastown/docs/design/orchestrator.md`.
+
 **Parked rigs do not start agents.** If `gt up` reports `skipped (rig parked)`, the rig was intentionally paused:
 
 ```bash
