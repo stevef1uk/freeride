@@ -405,7 +405,64 @@ gt up --orchestrator-only
 
 Per-rig pipeline sessions (NATS) include `te-<rig>-polecat`, `te-<rig>-architect`, `te-<rig>-qa`, plus town `hq-planner` / `hq-setup` for planning and project setup. Tail logs under `~/gt/<rig>/polecat/typescript`, etc. (see the concept doc table).
 
-**Incremental bug fixes:** For existing source files, the polecat must use **`sed -i`** or **`patch`** (not full-file `cat > … <<'EOF'` rewrites). gt-agent enforces this automatically when the file is already on disk; new files still use heredoc.
+**Incremental bug fixes:** For existing source files, the polecat must use native **`EDIT:`** / **`WRITE:`** (or **`sed -i`** / **`patch`** as fallback — not full-file `cat > … <<'EOF'` rewrites). gt-agent enforces this automatically when the file is already on disk; new files still use heredoc.
+
+### Polecat host tools (optional)
+
+Install on the **same machine** that runs `gt-agent` for rig-flow **implementation** (the per-rig polecat NATS session, e.g. `~/gt/<rig>/polecat/`). These are not part of planner **project_setup** (module/venv only); they help the polecat during implement.
+
+#### Codeindex (dependency blast radius)
+
+[codeindex](https://github.com/scheidydude/codeindex) is optional. When the `codeindex` CLI is on `PATH`, gt-agent:
+
+1. Runs **`refresh_codeindex`** at the start of each implementation task (`rig-flow` `pre_run`).
+2. Builds or refreshes **`{rig}/mayor/rig/codeindex.json`** from the profile `layout_root` (e.g. `linkshelf/`).
+3. Injects a **Codeindex blast radius** section into each implement-bead prompt (`codeindex impact` on the active file).
+
+**One-time install:**
+
+```bash
+pip install codeindex
+# or: pipx install codeindex
+
+codeindex --help   # must succeed; gt-agent uses exec.LookPath("codeindex")
+```
+
+**Disable** without uninstalling:
+
+```bash
+export GT_CODEINDEX=0   # polecat agent env in settings/config.json, or shell before gt up
+```
+
+**Manual refresh** (debugging a rig worktree):
+
+```bash
+export GT_ROOT=~/gt
+RIG=testgt3
+cd "$GT_ROOT/$RIG/mayor/rig"
+codeindex analyze linkshelf --output codeindex.json
+codeindex symbols linkshelf --inline --index codeindex.json
+codeindex impact internal/api/handlers.go --index codeindex.json
+```
+
+Use paths **relative to the layout root** passed to `analyze` (here `linkshelf/`, so `internal/api/handlers.go` not `linkshelf/internal/...`). If impact says the file is missing, re-run `analyze` after pulling polecat edits or check that `layout_root` in `{rig}/mayor/rig/.gastown/workflow-profile.json` matches your tree.
+
+After updating gastown templates or this integration, sync into the town and reinstall binaries:
+
+```bash
+cd gastown && make install
+cd ~/gt && gt orchestrator sync --update-changed
+```
+
+More detail: [rig-flow operator notes — Codeindex](gastown/internal/orchestrator/town/README.md) (native EDIT tools section).
+
+#### goimports (Go rigs)
+
+When `goimports` is on `PATH`, gt-agent runs it on the **package** after native **EDIT:**/**WRITE:** if verify reports unused imports (common on `*_test.go` while another bead owns production code).
+
+```bash
+go install golang.org/x/tools/cmd/goimports@latest
+```
 
 **Parked rigs do not start agents.** If `gt up` reports `skipped (rig parked)`, the rig was intentionally paused:
 
