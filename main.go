@@ -83,6 +83,8 @@ type modelsConfig struct {
 	IdeModels                   []ideModel                        `yaml:"ideModels"`
 	LocalOpenAI                 []localOpenAIModel                `yaml:"localOpenAI"`
 	RolePrepend                 map[string][]string               `yaml:"rolePrepend"`
+	RoleLocalFirst              map[string][]string               `yaml:"roleLocalFirst"`
+	RoleLocalOnly               []string                          `yaml:"roleLocalOnly"`
 	MassiveOnlyRoles            []string                          `yaml:"massiveOnlyRoles"`
 	FreeModelScoreBoost         []scoreBoost                      `yaml:"freeModelScoreBoost"`
 	TrustedScoringNames         []string                          `yaml:"trustedScoringNames"`
@@ -111,9 +113,15 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d local-GPU block ids, %d local-GPU block patterns from config",
+	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d role local-first, %d local-GPU block ids, %d local-GPU block patterns from config",
 		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.GeminiModels), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
-		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
+		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
+	if len(globalModelsConfig.RoleLocalFirst) > 0 {
+		log.Printf("[INFO] roleLocalFirst: %d role(s) use local GPU before cloud", len(globalModelsConfig.RoleLocalFirst))
+	}
+	if len(globalModelsConfig.RoleLocalOnly) > 0 {
+		log.Printf("[INFO] roleLocalOnly: %v — no cloud fallback for these roles", globalModelsConfig.RoleLocalOnly)
+	}
 	if len(globalModelsConfig.GeminiModels) > 0 {
 		if resolveGeminiAPIKey() == "" {
 			log.Printf("[WARN] geminiModels configured but GEMINI_API_KEY (or GOOGLE_API_KEY) is unset — Gemini direct routes will be skipped")
@@ -1109,9 +1117,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	candidates := selectCandidates(ctx)
+	polecatLocalOnly := roleUsesLocalOnly(role, conf) && allowLocalOpenAI
 
 	// If all are in cooldown, only try free models - never fall back to paid models
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && !polecatLocalOnly {
 		log.Printf("[DEBUG] candidates empty, checking models: or=%s len(models)=%d len(nvidiaModels)=%d", originalModel, len(cachedFreeModels), len(cachedNvidiaModels))
 		// Filter to only tool-capable models for fallback
 		toolCapableNvidia := func() []nvidiaModel {
@@ -1321,7 +1330,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			outboundBody = bodyBytes
 		}
 
-		upCtx, upCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		upstreamTimeout := 60 * time.Second
+		if isLocalOpenAIModelID(candidate) {
+			upstreamTimeout = 180 * time.Second
+		}
+		upCtx, upCancel := context.WithTimeout(context.Background(), upstreamTimeout)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)
@@ -1358,6 +1371,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			} else {
 				log.Printf("[DEBUG] Context canceled for %s, skipping cooldown", candidate)
 			}
+			if i < len(candidates)-1 {
+				log.Printf("[INFO] Falling back from %s to %s", candidate, candidates[i+1])
+			}
 			upCancel()
 			continue
 		}
@@ -1375,8 +1391,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				bodyStr := string(errorBody)
 				// Don't cooldown on client-caused errors (like context length)
 				isContextError := strings.Contains(bodyStr, "context length") ||
+					strings.Contains(bodyStr, "Context size has been exceeded") ||
 					strings.Contains(bodyStr, "too many input tokens") ||
-					strings.Contains(bodyStr, "maximum context length")
+					strings.Contains(bodyStr, "maximum context length") ||
+					strings.Contains(bodyStr, "context window")
 
 				if !isContextError {
 					markCooldown(candidate)
@@ -1399,7 +1417,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		// Log success only for 2xx
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			log.Printf("Model %s succeeded (status %d). Returning response to client.", candidate, resp.StatusCode)
+			if role != "" {
+				log.Printf("Model %s succeeded (status %d) for role=%s. Returning response to client.", candidate, resp.StatusCode, role)
+			} else {
+				log.Printf("Model %s succeeded (status %d). Returning response to client.", candidate, resp.StatusCode)
+			}
 			markSuccess(candidate)
 		} else {
 			log.Printf("Model %s returned status %d. Skipping (not cooling down).", candidate, resp.StatusCode)
@@ -3033,8 +3055,52 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 	return finalTools
 }
 
+func roleLocalFirstModels(role string, conf modelsConfig) []string {
+	if role == "" {
+		return nil
+	}
+	return conf.RoleLocalFirst[role]
+}
+
+func roleUsesLocalOnly(role string, conf modelsConfig) bool {
+	if role == "" {
+		return false
+	}
+	for _, r := range conf.RoleLocalOnly {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+func localOpenAIModelConfigured(modelID string, conf modelsConfig) bool {
+	for _, m := range conf.LocalOpenAI {
+		if m.ID == modelID && strings.TrimSpace(m.Endpoint) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func selectCandidates(ctx candidateContext) []string {
 	var candidates []string
+
+	// Tier -1: roleLocalFirst (models.yaml) — polecat → llama-server before cloud.
+	if ctx.allowLocalOpenAI && ctx.role != "" {
+		for _, mid := range roleLocalFirstModels(ctx.role, ctx.conf) {
+			if mid == "" || ctx.isCooldown(mid) || ctx.isExcluded(mid) {
+				continue
+			}
+			candidates = append(candidates, mid)
+		}
+	}
+	// LLM_MODEL=local/... in gt settings (same id as localOpenAI).
+	if ctx.allowLocalOpenAI && ctx.originalModel != "" && localOpenAIModelConfigured(ctx.originalModel, ctx.conf) {
+		if !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
+			candidates = append(candidates, ctx.originalModel)
+		}
+	}
 
 	// Gas Town roles: try requested NVIDIA/meta/Gemini model first (zero-cost, skip waterfall).
 	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
@@ -3415,6 +3481,20 @@ func selectCandidates(ctx candidateContext) []string {
 			}
 		}
 		candidates = massiveCandidates
+	}
+
+	// roleLocalOnly: polecat must not silently fall back to cloud when local is configured.
+	if ctx.allowLocalOpenAI && roleUsesLocalOnly(ctx.role, ctx.conf) {
+		var localOnly []string
+		for _, c := range candidates {
+			if isLocalOpenAIModelID(c) {
+				localOnly = append(localOnly, c)
+			}
+		}
+		if len(localOnly) > 0 {
+			log.Printf("[INFO] roleLocalOnly %s: restricting candidates to %v", ctx.role, localOnly)
+			candidates = localOnly
+		}
 	}
 
 	return candidates

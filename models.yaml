@@ -5,6 +5,15 @@ massiveOnlyRoles:
   - planner
   - polecat
 
+# Polecat tries localOpenAI on :8090 before cloud (requires --allow-local-openai).
+roleLocalFirst:
+  polecat:
+    - "local/qwen3-coder-30b"
+
+# Polecat never falls back to cloud when local is available (witness/refinery still use cloud).
+roleLocalOnly:
+  - polecat
+
 # Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
 rolePrepend:
   polecat:
@@ -156,12 +165,12 @@ ideModels:
 #
 # Two names (not interchangeable):
 #   id    — LLM_MODEL in ~/gt/settings/config.json (Freeride route name)
-#   model — JSON "model" sent to llama-server (from: curl -s :8080/v1/models | jq -r '.data[0].id')
+#   model — JSON "model" sent to llama-server (from: curl -s :8090/v1/models | jq -r '.data[0].id')
 localOpenAI:
   - id: "local/qwen3-coder-30b"
-    endpoint: "http://127.0.0.1:8080"
+    endpoint: "http://127.0.0.1:8090"
     model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
-    cooldown: "30m"
+    cooldown: "2m"
 
 # Notes:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)
