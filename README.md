@@ -504,7 +504,11 @@ curl -s http://localhost:11434/v1/models | head -5
 
 #### Check requests are routing through the proxy:
 ```bash
-tail -f freeride_live.log | grep -E "Attempting|succeeded|ERROR"
+tail -f freeride_live.log | grep -E "Attempting|\[LOCAL\]|succeeded|ERROR"
+
+# Table of attempts vs completions (handles role= and [LOCAL] log lines):
+python3 scripts/freeride_proxy_model_stats.py freeride_live.log
+python3 scripts/freeride_proxy_model_stats.py freeride_live.log --roles --watch 5
 ```
 
 #### Check agent processes:

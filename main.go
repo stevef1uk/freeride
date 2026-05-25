@@ -1362,14 +1362,29 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(outboundBody)))
 		req.Header.Set("X-Freeride-Fallback", "true") // Loop prevention for IDE bridges
 
-		log.Printf("Attempting request with model: %s (via %s)", candidate, targetURL)
+		attemptStart := time.Now()
+		if isLocalOpenAIModelID(candidate) {
+			if role != "" {
+				log.Printf("[LOCAL] role=%s attempting %s (timeout %v) via %s", role, candidate, upstreamTimeout, targetURL)
+			} else {
+				log.Printf("[LOCAL] attempting %s (timeout %v) via %s", candidate, upstreamTimeout, targetURL)
+			}
+		} else {
+			log.Printf("Attempting request with model: %s (via %s)", candidate, targetURL)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			log.Printf("Request to %s failed: %v", candidate, err)
-			if !errors.Is(err, context.Canceled) {
-				markCooldown(candidate)
+			if isLocalOpenAIModelID(candidate) {
+				log.Printf("[LOCAL] %s failed after %v: %v", candidate, time.Since(attemptStart).Round(time.Millisecond), err)
 			} else {
+				log.Printf("Request to %s failed: %v", candidate, err)
+			}
+			if !errors.Is(err, context.Canceled) && !isLocalOpenAIModelID(candidate) {
+				markCooldown(candidate)
+			} else if errors.Is(err, context.Canceled) {
 				log.Printf("[DEBUG] Context canceled for %s, skipping cooldown", candidate)
+			} else {
+				log.Printf("[LOCAL] %s error — not applying cloud-style cooldown", candidate)
 			}
 			if i < len(candidates)-1 {
 				log.Printf("[INFO] Falling back from %s to %s", candidate, candidates[i+1])
@@ -1417,7 +1432,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		// Log success only for 2xx
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			if role != "" {
+			elapsed := time.Since(attemptStart).Round(time.Millisecond)
+			if isLocalOpenAIModelID(candidate) {
+				if role != "" {
+					log.Printf("[LOCAL] %s succeeded (status %d) for role=%s in %v — returning to client", candidate, resp.StatusCode, role, elapsed)
+				} else {
+					log.Printf("[LOCAL] %s succeeded (status %d) in %v — returning to client", candidate, resp.StatusCode, elapsed)
+				}
+			} else if role != "" {
 				log.Printf("Model %s succeeded (status %d) for role=%s. Returning response to client.", candidate, resp.StatusCode, role)
 			} else {
 				log.Printf("Model %s succeeded (status %d). Returning response to client.", candidate, resp.StatusCode)
@@ -1452,6 +1474,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If we get here, no candidates were available or all failed
+	if polecatLocalOnly {
+		log.Printf("[ERROR] roleLocalOnly polecat: local llama-server request failed (no cloud fallback)")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error": {"message": "Local llama-server unavailable for polecat (roleLocalOnly). Check :8090 is up and freeride was started with --allow-local-openai.", "type": "local_unavailable"}}`))
+		return
+	}
 	log.Printf("[ERROR] No models available to handle the request.")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusServiceUnavailable)
@@ -3484,15 +3513,32 @@ func selectCandidates(ctx candidateContext) []string {
 	}
 
 	// roleLocalOnly: polecat must not silently fall back to cloud when local is configured.
+	// Always pin to localOpenAI entries (ignore cooldown — cooldown is for cloud APIs).
 	if ctx.allowLocalOpenAI && roleUsesLocalOnly(ctx.role, ctx.conf) {
 		var localOnly []string
-		for _, c := range candidates {
-			if isLocalOpenAIModelID(c) {
-				localOnly = append(localOnly, c)
+		for _, m := range ctx.conf.LocalOpenAI {
+			if m.ID == "" || m.Endpoint == "" || ctx.isExcluded(m.ID) {
+				continue
+			}
+			localOnly = append(localOnly, m.ID)
+		}
+		for _, mid := range roleLocalFirstModels(ctx.role, ctx.conf) {
+			if mid == "" || ctx.isExcluded(mid) {
+				continue
+			}
+			found := false
+			for _, id := range localOnly {
+				if id == mid {
+					found = true
+					break
+				}
+			}
+			if !found {
+				localOnly = append(localOnly, mid)
 			}
 		}
 		if len(localOnly) > 0 {
-			log.Printf("[INFO] roleLocalOnly %s: restricting candidates to %v", ctx.role, localOnly)
+			log.Printf("[INFO] roleLocalOnly %s: local-only candidates %v (cloud fallback disabled)", ctx.role, localOnly)
 			candidates = localOnly
 		}
 	}
