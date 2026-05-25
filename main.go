@@ -56,11 +56,12 @@ type compatModel struct {
 // localOpenAIModel is an OpenAI-compatible HTTP server (e.g. llama.cpp llama-server)
 // reached directly, without an API key unless apiKeyEnv is set.
 type localOpenAIModel struct {
-	ID        string `yaml:"id"`
-	Endpoint  string `yaml:"endpoint"` // base URL, e.g. http://127.0.0.1:8080
-	Model     string `yaml:"model"`    // exact JSON "model" llama-server expects (see GET /v1/models on :8080)
-	Cooldown  string `yaml:"cooldown,omitempty"`
-	APIKeyEnv string `yaml:"apiKeyEnv,omitempty"` // optional: env var for Bearer token; if set and empty, no Authorization header
+	ID           string `yaml:"id"`
+	Endpoint     string `yaml:"endpoint"` // base URL, e.g. http://127.0.0.1:8090
+	Model        string `yaml:"model"`    // exact JSON "model" llama-server expects (see GET /v1/models)
+	ContextSlots int    `yaml:"contextSlots,omitempty"` // llama-server -c; caps max_tokens so prompt+gen fits
+	Cooldown     string `yaml:"cooldown,omitempty"`
+	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"` // optional: env var for Bearer token; if set and empty, no Authorization header
 }
 
 // blockSmallCloudWhenLocalGPUConfig lists cloud model ids/patterns to skip when localOpenAI
@@ -116,12 +117,6 @@ func loadModelsConfig() {
 	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d role local-first, %d local-GPU block ids, %d local-GPU block patterns from config",
 		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.GeminiModels), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
 		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
-	if len(globalModelsConfig.RoleLocalFirst) > 0 {
-		log.Printf("[INFO] roleLocalFirst: %d role(s) use local GPU before cloud", len(globalModelsConfig.RoleLocalFirst))
-	}
-	if len(globalModelsConfig.RoleLocalOnly) > 0 {
-		log.Printf("[INFO] roleLocalOnly: %v — no cloud fallback for these roles", globalModelsConfig.RoleLocalOnly)
-	}
 	if len(globalModelsConfig.GeminiModels) > 0 {
 		if resolveGeminiAPIKey() == "" {
 			log.Printf("[WARN] geminiModels configured but GEMINI_API_KEY (or GOOGLE_API_KEY) is unset — Gemini direct routes will be skipped")
@@ -180,6 +175,72 @@ func isLocalOpenAIModelID(id string) bool {
 		}
 	}
 	return false
+}
+
+func localContextSlots(configured int) int {
+	if configured > 0 {
+		return configured
+	}
+	return 16384
+}
+
+// estimatePromptTokens is a coarse upper bound (chars/4) for context budgeting.
+func estimatePromptTokens(body map[string]interface{}) int {
+	msgs, ok := body["messages"].([]interface{})
+	if !ok {
+		return 0
+	}
+	chars := 0
+	for _, m := range msgs {
+		mMap, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		switch c := mMap["content"].(type) {
+		case string:
+			chars += len(c)
+		case []interface{}:
+			for _, part := range c {
+				if pMap, ok := part.(map[string]interface{}); ok {
+					if t, ok := pMap["text"].(string); ok {
+						chars += len(t)
+					}
+				}
+			}
+		}
+	}
+	tokens := chars / 4
+	if tokens < 1 && chars > 0 {
+		tokens = 1
+	}
+	return tokens
+}
+
+// capLocalRequestContext lowers max_tokens so prompt + generation fits llama-server -c.
+func capLocalRequestContext(body map[string]interface{}, contextSlots int) {
+	ctx := localContextSlots(contextSlots)
+	promptEst := estimatePromptTokens(body)
+	const slack = 384
+	room := ctx - promptEst - slack
+	if room < 256 {
+		room = 256
+	}
+	// Polecat replies are usually short CMD/EDIT blocks; avoid reserving 4096 on tight ctx.
+	if room > 3072 {
+		room = 3072
+	}
+	var requested float64 = 4096
+	if mt, ok := body["max_tokens"].(float64); ok {
+		requested = mt
+	}
+	capped := float64(room)
+	if requested < capped {
+		capped = requested
+	}
+	if capped != requested {
+		log.Printf("[LOCAL] cap max_tokens %.0f → %.0f (est prompt ~%d, ctx=%d)", requested, capped, promptEst, ctx)
+	}
+	body["max_tokens"] = capped
 }
 
 func localGPUBlockPatternMatches(lowerModel, pattern string) bool {
@@ -1117,10 +1178,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	candidates := selectCandidates(ctx)
-	polecatLocalOnly := roleUsesLocalOnly(role, conf) && allowLocalOpenAI
 
 	// If all are in cooldown, only try free models - never fall back to paid models
-	if len(candidates) == 0 && !polecatLocalOnly {
+	if len(candidates) == 0 {
 		log.Printf("[DEBUG] candidates empty, checking models: or=%s len(models)=%d len(nvidiaModels)=%d", originalModel, len(cachedFreeModels), len(cachedNvidiaModels))
 		// Filter to only tool-capable models for fallback
 		toolCapableNvidia := func() []nvidiaModel {
@@ -1300,6 +1360,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				currentBody["model"] = geminiAPIModelName(geminiDirect, candidate)
 			}
 			sanitizeBody(currentBody)
+			if localOpenAI != nil {
+				capLocalRequestContext(currentBody, localOpenAI.ContextSlots)
+			}
 			outboundBody, _ = json.Marshal(currentBody)
 
 			if debugMode {
@@ -1313,7 +1376,12 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				} else if tools, ok := currentBody["tools"].([]map[string]interface{}); ok {
 					toolCount = len(tools)
 				}
-				log.Printf("[DEBUG] Request to %s: %d messages, %d tools", candidate, msgCount, toolCount)
+				if mt, ok := currentBody["max_tokens"].(float64); ok && localOpenAI != nil {
+					log.Printf("[DEBUG] Request to %s: %d messages, %d tools, max_tokens=%.0f (est prompt ~%d tok, ctx=%d)",
+						candidate, msgCount, toolCount, mt, estimatePromptTokens(currentBody), localContextSlots(localOpenAI.ContextSlots))
+				} else {
+					log.Printf("[DEBUG] Request to %s: %d messages, %d tools", candidate, msgCount, toolCount)
+				}
 				if msgCount > 0 {
 					msgs, _ := currentBody["messages"].([]interface{})
 					if len(msgs) > 0 {
@@ -1474,13 +1542,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If we get here, no candidates were available or all failed
-	if polecatLocalOnly {
-		log.Printf("[ERROR] roleLocalOnly polecat: local llama-server request failed (no cloud fallback)")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error": {"message": "Local llama-server unavailable for polecat (roleLocalOnly). Check :8090 is up and freeride was started with --allow-local-openai.", "type": "local_unavailable"}}`))
-		return
-	}
 	log.Printf("[ERROR] No models available to handle the request.")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusServiceUnavailable)
@@ -3084,25 +3145,6 @@ func extractMarkdownTools(content string) []map[string]interface{} {
 	return finalTools
 }
 
-func roleLocalFirstModels(role string, conf modelsConfig) []string {
-	if role == "" {
-		return nil
-	}
-	return conf.RoleLocalFirst[role]
-}
-
-func roleUsesLocalOnly(role string, conf modelsConfig) bool {
-	if role == "" {
-		return false
-	}
-	for _, r := range conf.RoleLocalOnly {
-		if r == role {
-			return true
-		}
-	}
-	return false
-}
-
 func localOpenAIModelConfigured(modelID string, conf modelsConfig) bool {
 	for _, m := range conf.LocalOpenAI {
 		if m.ID == modelID && strings.TrimSpace(m.Endpoint) != "" {
@@ -3112,39 +3154,120 @@ func localOpenAIModelConfigured(modelID string, conf modelsConfig) bool {
 	return false
 }
 
+func candidateListContains(candidates []string, id string) bool {
+	for _, c := range candidates {
+		if c == id {
+			return true
+		}
+	}
+	return false
+}
+
+// cerebrasModelAllowedForRole enforces massiveOnlyRoles and non-cerebras ids.
+func cerebrasModelAllowedForRole(modelID, role string) bool {
+	if !strings.HasPrefix(strings.ToLower(modelID), "cerebras/") {
+		return false
+	}
+	if role != "" && roleRequiresMassiveModel(role) && !isMassiveModel(modelID) {
+		return false
+	}
+	return true
+}
+
+// appendCerebrasPriorityCandidates prepends fast Cerebras routes (large/preview models first).
+func appendCerebrasPriorityCandidates(candidates []string, ctx candidateContext) []string {
+	add := func(id string) {
+		if id == "" || ctx.isCooldown(id) || ctx.isExcluded(id) || !cerebrasModelAllowedForRole(id, ctx.role) {
+			return
+		}
+		if !candidateListContains(candidates, id) {
+			candidates = append(candidates, id)
+		}
+	}
+	if ctx.isComplexRequest && ctx.allowPaid {
+		for _, cid := range ctx.conf.CerebrasPerformance {
+			add(cid)
+		}
+	}
+	for _, cid := range ctx.conf.CerebrasBudget {
+		if isMassiveModel(cid) && ctx.isComplexRequest {
+			add(cid)
+		}
+	}
+	for _, m := range ctx.cerebrasModels {
+		modelName := "cerebras/" + m.ID
+		inConfig := false
+		for _, bc := range ctx.conf.CerebrasBudget {
+			if bc == modelName {
+				inConfig = true
+				break
+			}
+		}
+		for _, pc := range ctx.conf.CerebrasPerformance {
+			if pc == modelName {
+				inConfig = true
+				break
+			}
+		}
+		if inConfig {
+			continue
+		}
+		if !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) && ctx.isComplexRequest {
+			add(modelName)
+		}
+	}
+	return candidates
+}
+
+// appendLocalOpenAICandidates adds local llama-server ids after capable cloud tiers.
+// Local replaces the small/weak-cloud slot; Tier 7 may append again as last-resort fallback (deduped).
+func appendLocalOpenAICandidates(candidates []string, ctx candidateContext) []string {
+	if !ctx.allowLocalOpenAI {
+		return candidates
+	}
+	for _, m := range ctx.conf.LocalOpenAI {
+		if m.ID == "" || m.Endpoint == "" || ctx.isCooldown(m.ID) || ctx.isExcluded(m.ID) {
+			continue
+		}
+		if !candidateListContains(candidates, m.ID) {
+			candidates = append(candidates, m.ID)
+		}
+	}
+	return candidates
+}
+
 func selectCandidates(ctx candidateContext) []string {
 	var candidates []string
 
-	// Tier -1: roleLocalFirst (models.yaml) — polecat → llama-server before cloud.
-	if ctx.allowLocalOpenAI && ctx.role != "" {
-		for _, mid := range roleLocalFirstModels(ctx.role, ctx.conf) {
-			if mid == "" || ctx.isCooldown(mid) || ctx.isExcluded(mid) {
-				continue
-			}
-			candidates = append(candidates, mid)
-		}
-	}
-	// LLM_MODEL=local/... in gt settings (same id as localOpenAI).
-	if ctx.allowLocalOpenAI && ctx.originalModel != "" && localOpenAIModelConfigured(ctx.originalModel, ctx.conf) {
-		if !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
-			candidates = append(candidates, ctx.originalModel)
-		}
-	}
+	// Tier 0.05: Cerebras first when model size allows (fast inference).
+	candidates = appendCerebrasPriorityCandidates(candidates, ctx)
 
-	// Gas Town roles: try requested NVIDIA/meta/Gemini model first (zero-cost, skip waterfall).
+	// Gas Town roles: try requested NVIDIA/meta/Gemini/Cerebras model (after Cerebras priority tier).
 	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
 		om := strings.ToLower(ctx.originalModel)
-		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") {
-			candidates = append(candidates, ctx.originalModel)
+		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") || strings.HasPrefix(om, "cerebras/") {
+			if !candidateListContains(candidates, ctx.originalModel) {
+				candidates = append(candidates, ctx.originalModel)
+			}
 		} else if strings.HasPrefix(om, "google/") && geminiDirectEnabledFor(ctx.conf) && lookupGeminiModel(ctx.originalModel) != nil {
 			candidates = append(candidates, ctx.originalModel)
 		}
+	} else if ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
+		om := strings.ToLower(ctx.originalModel)
+		if strings.HasPrefix(om, "cerebras/") && !candidateListContains(candidates, ctx.originalModel) {
+			candidates = append(candidates, ctx.originalModel)
+		}
 	}
 
-	// Tier 0.1: Cerebras Budget Models (Free Previews / Ultra-cheap 8B)
+	// Tier 0.1: Cerebras budget small models only (massive previews are in tier 0.05).
 	for _, cid := range ctx.conf.CerebrasBudget {
+		if isMassiveModel(cid) {
+			continue
+		}
 		if !ctx.isCooldown(cid) && !ctx.isExcluded(cid) {
-			candidates = append(candidates, cid)
+			if !candidateListContains(candidates, cid) {
+				candidates = append(candidates, cid)
+			}
 		}
 	}
 
@@ -3160,18 +3283,12 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 0.2: Cerebras Performance Models (Only for complex requests AND if paid is allowed)
-	if ctx.isComplexRequest && ctx.allowPaid {
-		for _, cid := range ctx.conf.CerebrasPerformance {
-			if !ctx.isCooldown(cid) && !ctx.isExcluded(cid) {
-				candidates = append(candidates, cid)
-			}
-		}
-	}
-
-	// Tier 0.4: Dynamic Cerebras Models (Fallback discovery)
+	// Tier 0.4: Dynamic Cerebras (non-massive / simple only; massive handled in tier 0.05).
 	for _, m := range ctx.cerebrasModels {
 		modelName := "cerebras/" + m.ID
+		if candidateListContains(candidates, modelName) {
+			continue
+		}
 		alreadyInConfig := false
 		for _, bc := range ctx.conf.CerebrasBudget {
 			if bc == modelName {
@@ -3188,9 +3305,12 @@ func selectCandidates(ctx candidateContext) []string {
 		if alreadyInConfig {
 			continue
 		}
-
+		if isMassiveModel(modelName) {
+			continue
+		}
 		if !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
-			isBudget := strings.Contains(m.ID, "8b") || strings.Contains(m.ID, "preview") || strings.Contains(m.ID, "oss") || strings.Contains(m.ID, "qwen-3")
+			isBudget := strings.Contains(m.ID, "8b") || strings.Contains(m.ID, "preview") ||
+				strings.Contains(m.ID, "oss") || strings.Contains(m.ID, "qwen-3")
 			if ctx.isComplexRequest || isBudget {
 				candidates = append(candidates, modelName)
 			}
@@ -3231,6 +3351,11 @@ func selectCandidates(ctx candidateContext) []string {
 				candidates = append(candidates, modelName)
 			}
 		}
+	}
+
+	// Tier 0.65: local GPU replaces small/weak cloud for Gas Town roles (after tier 0.6 reliable).
+	if ctx.role != "" {
+		candidates = appendLocalOpenAICandidates(candidates, ctx)
 	}
 
 	// Tier 1: Original requested model (if Free)
@@ -3480,17 +3605,8 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 7: Local llama-server fallback (after capable cloud; only when --allow-local-openai)
-	if ctx.allowLocalOpenAI {
-		for _, m := range ctx.conf.LocalOpenAI {
-			if m.ID == "" || m.Endpoint == "" {
-				continue
-			}
-			if !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) {
-				candidates = append(candidates, m.ID)
-			}
-		}
-	}
+	// Tier 7: Local llama-server last-resort fallback (deduped if already added at tier 0.65).
+	candidates = appendLocalOpenAICandidates(candidates, ctx)
 	uniqueCandidates := []string{}
 	seenCandidates := make(map[string]bool)
 	for _, c := range candidates {
@@ -3510,37 +3626,6 @@ func selectCandidates(ctx candidateContext) []string {
 			}
 		}
 		candidates = massiveCandidates
-	}
-
-	// roleLocalOnly: polecat must not silently fall back to cloud when local is configured.
-	// Always pin to localOpenAI entries (ignore cooldown — cooldown is for cloud APIs).
-	if ctx.allowLocalOpenAI && roleUsesLocalOnly(ctx.role, ctx.conf) {
-		var localOnly []string
-		for _, m := range ctx.conf.LocalOpenAI {
-			if m.ID == "" || m.Endpoint == "" || ctx.isExcluded(m.ID) {
-				continue
-			}
-			localOnly = append(localOnly, m.ID)
-		}
-		for _, mid := range roleLocalFirstModels(ctx.role, ctx.conf) {
-			if mid == "" || ctx.isExcluded(mid) {
-				continue
-			}
-			found := false
-			for _, id := range localOnly {
-				if id == mid {
-					found = true
-					break
-				}
-			}
-			if !found {
-				localOnly = append(localOnly, mid)
-			}
-		}
-		if len(localOnly) > 0 {
-			log.Printf("[INFO] roleLocalOnly %s: local-only candidates %v (cloud fallback disabled)", ctx.role, localOnly)
-			candidates = localOnly
-		}
 	}
 
 	return candidates

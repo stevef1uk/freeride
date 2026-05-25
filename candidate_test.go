@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -49,11 +50,11 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 			allowPaid:        true,
 		},
 		{
-			name:             "Complex request prioritizes performance after budget",
+			name:             "Complex request prioritizes Cerebras performance first",
 			role:             "architect",
 			isComplexRequest: true,
-			expectedFirst:    budgetLarge,
-			contains:         perf70,
+			expectedFirst:    perf70,
+			contains:         budgetLarge,
 			allowPaid:        true,
 		},
 		{
@@ -61,7 +62,7 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 			role:             "user",
 			isComplexRequest: false,
 			cooldowns:        map[string]bool{budgetSmall: true},
-			expectedFirst:    budgetLarge,
+			expectedFirst:    cbPreviewNew, // budget-large is massive (tier 0.05 only when complex)
 			allowPaid:        true,
 		},
 		{
@@ -401,4 +402,142 @@ func TestSelectCandidates_PlannerKeepsLocalOpenAI(t *testing.T) {
 	if !foundLocal {
 		t.Fatalf("planner should retain localOpenAI id after massive filter, got %v", candidates)
 	}
+}
+
+func TestSelectCandidates_CerebrasBeforeNvidiaForPolecat(t *testing.T) {
+	const (
+		meta70    = "meta/llama-3.3-70b-instruct"
+		cb235     = "cerebras/qwen-3-235b-a22b-instruct-2507"
+		cb120     = "cerebras/gpt-oss-120b"
+		nvidiaBig = "nvidia/llama-3.3-nemotron-super-49b-v1"
+		localGPU  = "local/qwen3-coder-30b"
+	)
+	prevAllow := allowLocalOpenAI
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		allowLocalOpenAI = prevAllow
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	conf := modelsConfig{
+		CerebrasBudget: []string{"cerebras/llama3.1-8b", cb120, cb235},
+		NvidiaReliable: []string{nvidiaBig, meta70},
+		LocalOpenAI: []localOpenAIModel{
+			{ID: localGPU, Endpoint: "http://127.0.0.1:8090", Model: "upstream"},
+		},
+		BlockSmallCloudWhenLocalGPU: blockSmallCloudWhenLocalGPUConfig{
+			Models:   []string{"cerebras/llama3.1-8b"},
+			Patterns: []string{"nano", "mini"},
+		},
+		MassiveOnlyRoles: []string{"polecat"},
+	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
+	allowLocalOpenAI = true
+
+	ctx := candidateContext{
+		role:             "polecat",
+		originalModel:    meta70,
+		conf:             conf,
+		isComplexRequest: true,
+		allowPaid:        true,
+		allowLocalOpenAI: true,
+		isCooldown:       func(m string) bool { return false },
+		isExcluded:       isCandidateExcluded,
+	}
+	candidates := selectCandidates(ctx)
+	if len(candidates) == 0 {
+		t.Fatal("expected candidates")
+	}
+	if !strings.HasPrefix(candidates[0], "cerebras/") {
+		t.Fatalf("expected Cerebras first for polecat, got %v", candidates)
+	}
+	nv := indexOfCandidate(candidates, nvidiaBig)
+	cb := indexOfCandidate(candidates, cb235)
+	if nv >= 0 && cb >= 0 && cb > nv {
+		t.Fatalf("Cerebras should precede NVIDIA, order=%v", candidates)
+	}
+	for _, c := range candidates {
+		if c == "cerebras/llama3.1-8b" {
+			t.Fatalf("8b cerebras should be blocked for polecat local-GPU mode, got %v", candidates)
+		}
+	}
+}
+
+func TestSelectCandidates_PolecatCapableCloudBeforeLocal(t *testing.T) {
+	const (
+		meta70     = "meta/llama-3.3-70b-instruct"
+		cb235      = "cerebras/qwen-3-235b-a22b-instruct-2507"
+		nvidiaBig  = "nvidia/llama-3.3-nemotron-super-49b-v1"
+		localGPU   = "local/qwen3-coder-30b"
+		paidClaude = "anthropic/claude-3.5-sonnet"
+	)
+	prevAllow := allowLocalOpenAI
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		allowLocalOpenAI = prevAllow
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	conf := modelsConfig{
+		CerebrasBudget: []string{"cerebras/llama3.1-8b", cb235},
+		NvidiaReliable: []string{nvidiaBig},
+		ReliableFree:   []string{meta70},
+		LocalOpenAI: []localOpenAIModel{
+			{ID: localGPU, Endpoint: "http://127.0.0.1:8090", Model: "upstream"},
+		},
+		BlockSmallCloudWhenLocalGPU: blockSmallCloudWhenLocalGPUConfig{
+			Models:   []string{"cerebras/llama3.1-8b"},
+			Patterns: []string{"nano", "mini"},
+		},
+		RolePrepend: map[string][]string{
+			"polecat": {paidClaude},
+		},
+		MassiveOnlyRoles: []string{"polecat"},
+	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
+	allowLocalOpenAI = true
+
+	ctx := candidateContext{
+		role:             "polecat",
+		originalModel:    meta70,
+		conf:             conf,
+		isComplexRequest: true,
+		allowPaid:        true,
+		allowLocalOpenAI: true,
+		isCooldown:       func(m string) bool { return false },
+		isExcluded:       isCandidateExcluded,
+	}
+	candidates := selectCandidates(ctx)
+	if len(candidates) == 0 {
+		t.Fatal("expected candidates")
+	}
+	if candidates[0] == localGPU {
+		t.Fatalf("local must not be first, got %v", candidates)
+	}
+	if len(candidates) == 1 {
+		t.Fatalf("must not be local-only, got %v", candidates)
+	}
+	if indexOfCandidate(candidates, localGPU) < 0 {
+		t.Fatalf("expected local fallback in list, got %v", candidates)
+	}
+	if indexOfCandidate(candidates, meta70) < 0 {
+		t.Fatalf("expected meta/70b-class cloud in list, got %v", candidates)
+	}
+}
+
+func indexOfCandidate(slice []string, s string) int {
+	for i, v := range slice {
+		if v == s {
+			return i
+		}
+	}
+	return -1
 }

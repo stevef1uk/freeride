@@ -125,8 +125,18 @@ func TestSelectCandidates_PolecatWithLocalGPU_IncludesGemini(t *testing.T) {
 	if len(candidates) == 0 {
 		t.Fatal("expected candidates for polecat")
 	}
-	if candidates[0] != "google/gemini-3.5-flash" {
-		t.Fatalf("first candidate: got %q want google/gemini-3.5-flash", candidates[0])
+	if !strings.HasPrefix(candidates[0], "cerebras/") {
+		t.Fatalf("expected Cerebras prioritized first, got %q", candidates[0])
+	}
+	foundGemini := false
+	for _, c := range candidates {
+		if c == "google/gemini-3.5-flash" {
+			foundGemini = true
+			break
+		}
+	}
+	if !foundGemini {
+		t.Fatalf("expected google/gemini-3.5-flash in candidates, got %v", candidates)
 	}
 }
 

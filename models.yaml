@@ -5,15 +5,6 @@ massiveOnlyRoles:
   - planner
   - polecat
 
-# Polecat tries localOpenAI on :8090 before cloud (requires --allow-local-openai).
-roleLocalFirst:
-  polecat:
-    - "local/qwen3-coder-30b"
-
-# Polecat never falls back to cloud when local is available (witness/refinery still use cloud).
-roleLocalOnly:
-  - polecat
-
 # Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
 rolePrepend:
   polecat:
@@ -69,6 +60,8 @@ geminiModels:
   - id: "google/gemini-2.5-flash-lite"
     model: "gemini-2.5-flash-lite"
 
+# Cerebras: Freeride tries massive budget/performance Cerebras before NVIDIA/meta when size allows.
+# Small entries (8b) are blocked for polecat when local GPU is on (blockSmallCloudWhenLocalGPU).
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
   - "cerebras/llama3.1-8b"                   # $0.10/1M tokens
@@ -170,6 +163,7 @@ localOpenAI:
   - id: "local/qwen3-coder-30b"
     endpoint: "http://127.0.0.1:8090"
     model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+    contextSlots: 16384  # must match llama-server -c; used to cap max_tokens in Freeride
     cooldown: "2m"
 
 # Notes:
