@@ -988,6 +988,20 @@ func markCooldown(model string) {
 	log.Printf("Model %s put in cooldown for %v (ErrorCount: %d)", model, cd, entry.ErrorCount)
 }
 
+func markCustomCooldown(model string, cd time.Duration) {
+	cooldownMu.Lock()
+	entry, ok := cooldowns[model]
+	if !ok {
+		entry = &cooldownEntry{}
+		cooldowns[model] = entry
+	}
+	entry.ErrorCount++
+	entry.CooldownEnd = time.Now().Add(cd)
+	saveCooldowns()
+	cooldownMu.Unlock()
+	log.Printf("Model %s put in CUSTOM cooldown for %v (ErrorCount: %d)", model, cd, entry.ErrorCount)
+}
+
 func markSuccess(model string) {
 	cooldownMu.Lock()
 	if entry, ok := cooldowns[model]; ok {
@@ -1479,7 +1493,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					strings.Contains(bodyStr, "maximum context length") ||
 					strings.Contains(bodyStr, "context window")
 
-				if !isContextError {
+				lowerBody := strings.ToLower(bodyStr)
+				isInsufficientCredits := strings.Contains(lowerBody, "insufficient credit") ||
+					strings.Contains(lowerBody, "insufficient balance") ||
+					strings.Contains(lowerBody, "insufficient_quota") ||
+					strings.Contains(lowerBody, "out of credit")
+
+				if isInsufficientCredits {
+					markCustomCooldown(candidate, time.Hour)
+				} else if !isContextError {
 					markCooldown(candidate)
 				} else {
 					log.Printf("[DEBUG] Context length error for %s, skipping cooldown", candidate)
