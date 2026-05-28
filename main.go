@@ -74,6 +74,8 @@ type blockSmallCloudWhenLocalGPUConfig struct {
 type modelsConfig struct {
 	CerebrasBudget              []string                          `yaml:"cerebrasBudget"`
 	CerebrasPerformance         []string                          `yaml:"cerebrasPerformance"`
+	GroqBudget                  []string                          `yaml:"groqBudget"`
+	GroqPerformance             []string                          `yaml:"groqPerformance"`
 	GeminiModels                []geminiModel                     `yaml:"geminiModels"`
 	ReliableFree                []string                          `yaml:"reliableFree"`
 	NvidiaReliable              []string                          `yaml:"nvidiaReliable"`
@@ -329,6 +331,14 @@ type cerebrasModel struct {
 	OwnedBy string `json:"owned_by"`
 }
 
+type groqModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+
 type ollamaModelDetails struct {
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
@@ -355,6 +365,7 @@ var (
 	cachedNvidiaModels   []nvidiaModel
 	cachedCerebrasModels []cerebrasModel
 	cachedOllamaModels   []ollamaModel
+	cachedGroqModels     []groqModel
 	cacheMutex           sync.RWMutex
 	cacheTime            time.Time
 	cacheTTL             = 1 * time.Hour
@@ -374,6 +385,7 @@ var (
 	fetchFreeModelsHook        func() ([]openRouterModel, error)
 	fetchNvidiaFreeModelsHook  func() ([]nvidiaModel, error)
 	fetchCerebrasModelsHook    func() ([]cerebrasModel, error)
+	fetchGroqModelsHook        func() ([]groqModel, error)
 	fetchOllamaCloudModelsHook func() ([]ollamaModel, error)
 )
 
@@ -384,6 +396,7 @@ type candidateContext struct {
 	models           []openRouterModel
 	nvidiaModels     []nvidiaModel
 	cerebrasModels   []cerebrasModel
+	groqModels       []groqModel
 	ollamaModels     []ollamaModel
 	allowPaid        bool
 	allowIDE         bool
@@ -699,6 +712,55 @@ func fetchCerebrasModels() ([]cerebrasModel, error) {
 	return wrapper.Data, nil
 }
 
+func fetchGroqModels() ([]groqModel, error) {
+	if fetchGroqModelsHook != nil {
+		return fetchGroqModelsHook()
+	}
+	cacheMutex.RLock()
+	if time.Since(cacheTime) < cacheTTL && len(cachedGroqModels) > 0 {
+		models := cachedGroqModels
+		cacheMutex.RUnlock()
+		return models, nil
+	}
+	cacheMutex.RUnlock()
+
+	apiKey := os.Getenv("GROQ_API_KEY")
+	if apiKey == "" {
+		log.Printf("[DEBUG] GROQ_API_KEY not set, skipping Groq models")
+		return nil, nil
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), "GET", "https://api.groq.com/openai/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Groq API returned status %d", resp.StatusCode)
+	}
+
+	var wrapper struct {
+		Data []groqModel `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		return nil, err
+	}
+
+	cacheMutex.Lock()
+	cachedGroqModels = wrapper.Data
+	cacheMutex.Unlock()
+
+	log.Printf("[DEBUG] Fetched %d Groq models", len(wrapper.Data))
+	return wrapper.Data, nil
+}
+
 func fetchOllamaCloudModels() ([]ollamaModel, error) {
 	if fetchOllamaCloudModelsHook != nil {
 		return fetchOllamaCloudModelsHook()
@@ -832,6 +894,7 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 
 	nvidiaModels, _ := fetchNvidiaFreeModels()
 	cerebrasModels, _ := fetchCerebrasModels()
+	groqModels, _ := fetchGroqModels()
 	ollamaModelsList, _ := fetchOllamaCloudModels()
 
 	var ollamaModels []ollamaModel
@@ -887,6 +950,24 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 				Format:            "gguf",
 				Family:            "cerebras",
 				Families:          []string{"cerebras"},
+				ParameterSize:     "unknown",
+				QuantizationLevel: "none",
+			},
+		})
+	}
+
+	// Add Groq models to discovery
+	for _, m := range groqModels {
+		ollamaModels = append(ollamaModels, ollamaModel{
+			Name:       "groq/" + m.ID,
+			Model:      "groq/" + m.ID,
+			ModifiedAt: time.Unix(m.Created, 0).Format(time.RFC3339),
+			Size:       0,
+			Digest:     "sha256:groq",
+			Details: ollamaModelDetails{
+				Format:            "gguf",
+				Family:            "groq",
+				Families:          []string{"groq"},
 				ParameterSize:     "unknown",
 				QuantizationLevel: "none",
 			},
@@ -1159,6 +1240,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	models, _ := fetchFreeModels()
 	nvidiaModels, _ := fetchNvidiaFreeModels()
 	cerebrasModels, _ := fetchCerebrasModels()
+	groqModels, _ := fetchGroqModels()
 	ollamaModels, _ := fetchOllamaCloudModels()
 
 	// Role-based routing detection
@@ -1179,6 +1261,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		models:           models,
 		nvidiaModels:     nvidiaModels,
 		cerebrasModels:   cerebrasModels,
+		groqModels:       groqModels,
 		ollamaModels:     ollamaModels,
 		allowPaid:        allowPaid,
 		allowIDE:         allowIDE,
@@ -1266,6 +1349,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		isOllama := strings.HasPrefix(candidate, "ollama/")
 		isCerebras := strings.HasPrefix(candidate, "cerebras/")
+		isGroq := strings.HasPrefix(candidate, "groq/")
 
 		isIDE := false
 		var localOpenAI *localOpenAIModel
@@ -1311,6 +1395,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		} else if isCerebras {
 			targetURL = "https://api.cerebras.ai/v1/chat/completions"
 			apiKey = os.Getenv("CEREBRAS_API_KEY")
+		} else if isGroq {
+			targetURL = "https://api.groq.com/openai/v1/chat/completions"
+			apiKey = os.Getenv("GROQ_API_KEY")
 		} else if isNvidia {
 			targetURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 			apiKey = os.Getenv("NVIDIA_API_KEY")
@@ -1367,6 +1454,8 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "ollama/")
 			// Strip cerebras/ prefix
 			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "cerebras/")
+			// Strip groq/ prefix
+			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "groq/")
 			if localOpenAI != nil && localOpenAI.Model != "" {
 				currentBody["model"] = localOpenAI.Model
 			}
@@ -3258,11 +3347,59 @@ func appendLocalOpenAICandidates(candidates []string, ctx candidateContext) []st
 	return candidates
 }
 
+// appendGroqPriorityCandidates prepends fast Groq routes.
+func appendGroqPriorityCandidates(candidates []string, ctx candidateContext) []string {
+	add := func(id string) {
+		if id == "" || ctx.isCooldown(id) || ctx.isExcluded(id) {
+			return
+		}
+		if !candidateListContains(candidates, id) {
+			candidates = append(candidates, id)
+		}
+	}
+	if ctx.isComplexRequest && ctx.allowPaid {
+		for _, cid := range ctx.conf.GroqPerformance {
+			add(cid)
+		}
+	}
+	for _, cid := range ctx.conf.GroqBudget {
+		if isMassiveModel(cid) && ctx.isComplexRequest {
+			add(cid)
+		}
+	}
+	for _, m := range ctx.groqModels {
+		modelName := "groq/" + m.ID
+		inConfig := false
+		for _, bc := range ctx.conf.GroqBudget {
+			if bc == modelName {
+				inConfig = true
+				break
+			}
+		}
+		for _, pc := range ctx.conf.GroqPerformance {
+			if pc == modelName {
+				inConfig = true
+				break
+			}
+		}
+		if inConfig {
+			continue
+		}
+		if !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) && ctx.isComplexRequest {
+			add(modelName)
+		}
+	}
+	return candidates
+}
+
 func selectCandidates(ctx candidateContext) []string {
 	var candidates []string
 
 	// Tier 0.05: Cerebras first when model size allows (fast inference).
 	candidates = appendCerebrasPriorityCandidates(candidates, ctx)
+
+	// Tier 0.06: Groq priority tier (immediately after Cerebras).
+	candidates = appendGroqPriorityCandidates(candidates, ctx)
 
 	// Gas Town roles: try requested NVIDIA/meta/Gemini/Cerebras model (after Cerebras priority tier).
 	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {

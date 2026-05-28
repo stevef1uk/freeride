@@ -73,6 +73,14 @@ cerebrasPerformance:
   - "cerebras/llama3.3-70b"                  # $0.85 (In) / $1.20 (Out) per 1M
   - "cerebras/llama3.1-70b"                  # $0.60/1M tokens
 
+# Priority 0.6: Groq (Used for fast inference when Cerebras fails or is missing)
+groqBudget:
+  - "groq/llama-3.1-8b-instant"
+
+groqPerformance:
+  - "groq/llama-3.3-70b-versatile"
+  - "groq/qwen3-32b"
+
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
   - "nousresearch/hermes-3-llama-3.1-405b:free"
