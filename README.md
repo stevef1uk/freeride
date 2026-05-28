@@ -593,6 +593,15 @@ cerebrasPerformance:
   - "cerebras/llama3.3-70b"
   - "cerebras/llama3.1-70b"
 
+# Priority 0.6: Groq (Used for fast inference when Cerebras fails or is missing)
+# Note: Requires GROQ_API_KEY environment variable.
+groqBudget:
+  - "groq/llama-3.1-8b-instant"
+
+groqPerformance:
+  - "groq/llama-3.3-70b-versatile"
+  - "groq/qwen3-32b"
+
 # Priority 1: Specifically requested reliable free models (OpenRouter)
 reliableFree:
   - "meta-llama/llama-3.3-70b-instruct:free"
