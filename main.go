@@ -3353,6 +3353,9 @@ func appendGroqPriorityCandidates(candidates []string, ctx candidateContext) []s
 		if id == "" || ctx.isCooldown(id) || ctx.isExcluded(id) {
 			return
 		}
+		if roleRequiresMassiveModel(ctx.role) && !isMassiveModel(id) {
+			return
+		}
 		if !candidateListContains(candidates, id) {
 			candidates = append(candidates, id)
 		}
