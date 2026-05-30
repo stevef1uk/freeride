@@ -112,6 +112,8 @@ cd gastown && git pull && make install
    # Or manually: ./freeride --debug --allow-local-openai > freeride_live.log 2>&1 &
    ```
 
+   **Stop local Ollama first** if you have the Ollama app or `ollama serve` running — it uses the same default port **11434**. Quit the menu-bar app (macOS) or run `pkill ollama` before starting Freeride, or Freeride will fail to bind and agents will hit the wrong server.
+
 4. Test:
    ```bash
    make test
@@ -374,7 +376,8 @@ cd gastown && make install && cd ..
 # 1. Ensure Freeride has API keys (.env in the directory you start it from)
 cp .env.template .env   # once, in the freeride repo; edit with your keys
 
-# 2. Ensure Freeride proxy is running (from that repo so .env is loaded)
+# 2. Stop local Ollama if running (same port 11434), then start Freeride
+pkill ollama 2>/dev/null || true   # or quit the Ollama menu-bar app on macOS
 ./freeride --debug > freeride_live.log 2>&1 &
 
 # 3. Ensure NATS is available (Docker or standalone)
@@ -394,6 +397,39 @@ gt hook de-123 defender/polecats/obsidian
 
 For **structured rig delivery** (SPEC → design → plan → implement → QA), Gas Town runs a central workflow FSM (`rig-flow`) instead of each agent self-dispatching via hooks and mail. Agents use **NATS** sessions with `gt-agent --orchestrated`; there is no tmux requirement when `session_transport` is `"nats"`.
 
+#### Dependencies
+
+**Required** (install once per machine; most services are started by `gt up`):
+
+| Dependency | Purpose | Notes |
+|------------|---------|--------|
+| **Docker** | Runs NATS | `gt up` starts container `gt-nats` (`nats:latest`, ports **4222** client / **8222** monitor). Docker daemon must be running before `gt up`. |
+| **Dolt** 1.82+ | Beads / issue storage | SQL server on port **3307**; started and managed by the Gas Town daemon. Install: `brew install dolt` (macOS) or [dolthub/dolt](https://github.com/dolthub/dolt). |
+| **beads (`bd`)** 0.55+ | Issue CLI | Planner, polecat, and QA run `bd create` / `bd list` / `bd close`. Installed with Gas Town (`make install` or `brew install gastown`). |
+| **Git** 2.25+ | Rigs, worktrees, checkpoints | Orchestrator commits on FSM transitions and pushes on `completed`. Worktree support required for polecats. |
+| **Go** 1.18+ | Build `gt` / `gt-agent` | From the `gastown/` submodule: `cd gastown && make install` → `~/.local/bin`. |
+| **Freeride proxy** | LLM backend | Runs on **:11434**; start from this repo so `.env` API keys load. **Stop local Ollama first** (same port). Polecat default model uses **Gemini direct** (`GEMINI_API_KEY` in `.env`). |
+| **Gas Town town** (`~/gt`) | Orchestrator + rig state | `gt install ~/gt --git`, then `"session_transport": "nats"` in `settings/config.json`. Templates sync to `{townRoot}/orchestrator/`. |
+
+**Rig toolchain** (per project language — scaffolded during `project_setup`, not host prerequisites):
+
+| Dependency | When |
+|------------|------|
+| **Go** (`go`, `go mod`, `go test`) | Go rigs — module init/tidy in setup; implement + QA run tests |
+| **Python 3** + **venv** + **pip** | Python rigs — venv + `requirements.txt` in setup; pytest/unittest in implement + QA |
+
+**Optional host tools** (same machine as the polecat NATS session; see [Polecat host tools](#polecat-host-tools-optional) below):
+
+| Tool | Purpose |
+|------|---------|
+| **codeindex** (`pip install codeindex`) | Dependency blast radius in implement-bead prompts; disable with `GT_CODEINDEX=0` |
+| **goimports** | Auto-fix unused imports after native **EDIT:**/**WRITE:** on Go rigs |
+| **Standalone NATS** | Only if you cannot use Docker — run `nats-server` on **4222** yourself; `gt up` still expects NATS reachable |
+
+**Not required for rig-flow:** tmux (legacy transport only when `"session_transport": "tmux"`).
+
+**Port conflict:** Local **Ollama** (app or `ollama serve`) and **Freeride** both default to **11434**. Use one or the other — quit Ollama before `./freeride`, or agents will talk to the wrong listener.
+
 Full documentation lives in the **gastown** submodule:
 
 - [Orchestrator (concept)](gastown/docs/concepts/orchestrator.md) — quickstart, QA outcomes, reset
@@ -411,6 +447,7 @@ gt orchestrator sync --update-changed
 **Bring up services and the orchestrator MCP process** (`gt up` starts NATS, daemon, and `gt orchestrator run`; PID in `daemon/orchestrator.pid`):
 
 ```bash
+pkill ollama 2>/dev/null || true              # Freeride needs :11434 — stop local Ollama first
 ./freeride --debug > freeride_live.log 2>&1 &   # from freeride repo (API keys in .env)
 cd ~/gt
 gt up
