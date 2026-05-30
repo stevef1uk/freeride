@@ -34,6 +34,7 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
 
 - Go 1.18+ (for building from source)
 - A **Cerebras API key** (Optional, for fastest inference)
+- A **Groq API key** (Optional, for fast inference fallback)
 - A **Gemini API key** (optional, for free Google Flash models via `geminiModels` in `models.yaml`)
 - An **OpenRouter API key** (for free OpenRouter models)
 - An **NVIDIA API key** (for highest-performance free NIM models)
@@ -99,6 +100,7 @@ cd gastown && git pull && make install
    NVIDIA_API_KEY=nvapi-...
    OLLAMA_API_KEY=1b18...
    CEREBRAS_API_KEY=csk-...
+   GROQ_API_KEY=gsk_...
    ```
    On startup, Freeride reads `.env` from the **current working directory** (`KEY=value` lines; `#` comments are ignored). You can use shell exports instead if you prefer.
 
@@ -218,6 +220,23 @@ Only ids listed under `geminiModels` use the direct API. Other `google/*` reques
 - **Thinking models**: `gemini-3.5-flash` may use internal reasoning tokens; use adequate `max_tokens` for short replies in tests.
 - **Tools**: Gemini supports tool-style requests; Freeride does not apply NVIDIA-style `tool_choice` stripping to direct Gemini routes.
 - **Discovery**: When the key is set, `google/gemini-*` ids appear on `/v1/models` and `/api/tags` with `owned_by: google-gemini`.
+
+---
+
+## Groq API (direct)
+
+Freeride supports routing to **Groq** for fast inference, typically used as a fallback when Cerebras is unavailable or rate-limited. 
+
+### Setup
+
+1. Create an API key at [GroqCloud](https://console.groq.com/keys).
+2. Add it to Freeride's `.env`:
+   ```env
+   GROQ_API_KEY=your-key-here
+   ```
+3. Ensure your `models.yaml` includes the Groq routes under `groqBudget` or `groqPerformance` (defaults ship in-repo).
+
+When configured, Freeride will prioritize Groq models as defined in your routing order (e.g., Tier 0.6).
 
 ---
 
