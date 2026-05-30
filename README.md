@@ -87,7 +87,8 @@ cd gastown && git pull && make install
 
 1. Build:
    ```bash
-   go build -o freeride .
+   make build
+   # Or manually: go build -o freeride .
    ```
 
 2. Configure API keys in a `.env` file in the directory where you start Freeride:
@@ -107,10 +108,16 @@ cd gastown && git pull && make install
 
 3. Run (add `--allow-local-openai` if you use `localOpenAI` in `models.yaml`):
    ```bash
-   ./freeride --debug --allow-local-openai > freeride_live.log 2>&1 &
+   make run
+   # Or manually: ./freeride --debug --allow-local-openai > freeride_live.log 2>&1 &
    ```
 
 4. Test:
+   ```bash
+   make test
+   # Or manually: go test ./... -v -count=1
+   ```
+   To verify the proxy is running locally, use:
    ```bash
    curl -s http://localhost:11434/v1/models | head -5
    ```
@@ -288,7 +295,8 @@ Freeride serves as the LLM backend for [Gas Town](https://github.com/gastownhall
                                          │  (port 11434)   │
                                          │  Routes to free │
                                          │  Gemini/Cerebras│
-                                         │  OpenRouter/NIM │
+                                         │  Groq/OpenRouter│
+                                         │  NIM/Ollama     │
                                          └─────────────────┘
 ```
 
