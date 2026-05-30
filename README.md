@@ -22,11 +22,12 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
 
 1. Cerebras budget / performance (from `models.yaml`)
 2. **Gemini API direct** (`geminiModels` in `models.yaml`, requires `GEMINI_API_KEY`)
-3. Role prepends (`rolePrepend`, when `--allow-paid`)
-4. Reliable free + NVIDIA lists, Ollama cloud, original model
-5. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
-6. IDE bridges (`--allow-ide`)
-7. **Local llama-server** (`localOpenAI`, `--allow-local-openai`) — **after** capable cloud
+3. **Groq API direct** (`groqBudget` / `groqPerformance` in `models.yaml`, requires `GROQ_API_KEY`)
+4. Role prepends (`rolePrepend`, when `--allow-paid`)
+5. Reliable free + NVIDIA lists, Ollama cloud, original model
+6. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
+7. IDE bridges (`--allow-ide`)
+8. **Local llama-server** (`localOpenAI`, `--allow-local-openai`) — **after** capable cloud
 
 ---
 
