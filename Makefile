@@ -26,7 +26,7 @@ do_it_all: build
 	# Build gastown
 	cd gastown && make install
 	# Initialize rig and orchestrator
-	mkdir -p $${GT_ROOT:-$$HOME/gt}
+	gt install $${GT_ROOT:-$$HOME/gt} || true
 	cd $${GT_ROOT:-$$HOME/gt} && gt down || true
 	cd $${GT_ROOT:-$$HOME/gt} && gt up --orchestrator-only &
 	# Wait for orchestrator to boot, then run the simple script (if it exists)
