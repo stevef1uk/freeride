@@ -85,21 +85,50 @@ cd gastown && git pull && make install
 
 ### One-line Setup (New Machine)
 
-If you are setting up a new machine, you can build, start, and test the entire stack (Freeride proxy + Gastown orchestrator) using a single command. 
+If you are setting up a new machine, you can build, start, and test the entire stack (Freeride proxy + Gas Town town + `ping_rig` e2e workflow) with one command.
 
-**IMPORTANT**: You *must* configure your API keys in a `.env` file first before running this command. The proxy will fail to start correctly if keys are missing.
+**IMPORTANT:** Configure API keys in `.env` first. The proxy will not route cloud models without them.
 
-1. Configure API keys (see Standalone Use below for details):
+1. Clone with the Gas Town submodule (see [Cloning freeride](#cloning-freeride-gas-town-submodule)), then configure keys:
    ```bash
    cp .env.template .env
-   # Edit .env and insert your keys (e.g. GEMINI_API_KEY, OPENROUTER_API_KEY)
+   # Edit .env — GEMINI_API_KEY, OPENROUTER_API_KEY, etc.
    ```
 
 2. Run the all-in-one setup:
    ```bash
    make do_it_all
    ```
-   *This command will build the proxy, run it in the background with `--debug`, build the gastown binaries, boot the orchestrator daemon, and run the simple end-to-end test script automatically.*
+
+   This will:
+
+   - Build and start **Freeride** on `:11434` (waits until `/v1/models` responds)
+   - Build **`gt` / `gt-agent`** from `gastown/` and run `gt install ~/gt`
+   - Run **`gastown/e2e_workflow_test.sh`** with hardened bootstrap scripts under `scripts/`:
+     - `gt down` / `gt up` (starts **Docker `gt-nats`**, Dolt, daemon, orchestrator, rig agents)
+     - `wait-for-gt-stack.sh --with-orchestrator` — polls Freeride, Dolt, NATS healthz, and a single orchestrator MCP
+     - `gt rig restart ping_rig` after the stack is ready
+     - `gt rig spec-index ping_rig` so **project_setup** uses the Python stack from SPEC/architecture (not a generic Go scaffold)
+
+3. **First run / slow Docker:** Pulling `nats:latest` happens **inside `gt up`** (Docker blocks until the image is local). That can take several minutes with no extra output — normal. After `gt up` returns, the wait script allows up to **120s** (default) for NATS health and orchestrator readiness. On a slow network, set a longer timeout before `make do_it_all`:
+
+   ```bash
+   export WAIT_TIMEOUT_SEC=300
+   make do_it_all
+   ```
+
+   Optional: wait for the stack manually after a partial run:
+
+   ```bash
+   export GT_ROOT=~/gt
+   bash scripts/wait-for-gt-stack.sh --with-orchestrator
+   ```
+
+4. **Stop local Ollama** before step 2 if it uses port **11434** (`pkill ollama` or quit the menu-bar app on macOS).
+
+5. **Fresh or deleted `~/gt`:** Safe to remove the town and re-run; bootstrap clears duplicate `gt orchestrator run` processes before `gt up` and does not kill the sole orchestrator immediately after `gt up`.
+
+See [Gas Town Integration — `make do_it_all` bootstrap](#make-do_it_all-bootstrap) for troubleshooting (NATS, orchestrator, project_setup stack).
 
 ### Standalone Use
 
@@ -384,6 +413,35 @@ Fresh `gt install` defaults map **polecat → gt-agent-gemini** (`google/gemini-
 - `role_agents.crew`: `"opencode"` for interactive TUI-based crew members
 - `gt-agent-local.env.LLM_ENDPOINT`: Points directly to Freeride's OpenAI-compatible endpoint
 
+### `make do_it_all` bootstrap
+
+Freeride ships helper scripts used when `FREERIDE_ROOT` is set (as `make do_it_all` does):
+
+| Script | Role |
+|--------|------|
+| `scripts/wait-for-gt-stack.sh` | Poll Freeride (`:11434`), Dolt (`:3307`), NATS (`:4222` + `http://127.0.0.1:8222/healthz`). `--freeride-only` before `gt up`; `--with-orchestrator` after `gt up`. |
+| `scripts/ensure-gt-orchestrator-singleton.sh` | Stops **duplicate** `gt orchestrator run` processes only (leaves a single process alone). Run before `gt down` / `gt up`, not immediately after `gt up`. |
+
+**Environment variables:**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WAIT_TIMEOUT_SEC` | `120` | Max seconds per wait phase (NATS, orchestrator). Use `300` when Docker may still be pulling or starting `gt-nats` on first boot. |
+| `GT_ROOT` / `GT_DIR` | `~/gt` | Town root for orchestrator checks |
+| `FREERIDE_ROOT` | (set by Makefile) | Directory containing `scripts/` for e2e bootstrap |
+
+**Docker image pull:** `docker run nats:latest` is invoked synchronously during `gt up`. Until the pull finishes, `gt up` appears hung — that is expected. The wait script runs **after** `gt up` and only checks that ports and `/healthz` respond; it does not run `docker pull` itself.
+
+**Verify NATS after bootstrap:**
+
+```bash
+curl -s http://127.0.0.1:8222/healthz
+docker ps --filter name=gt-nats
+cd ~/gt && gt mayor workflow list
+```
+
+**If orchestrator wait loops at “0 orchestrator processes”:** Ensure you are not running `ensure-gt-orchestrator-singleton.sh` right after `gt up` (e2e no longer does). Upgrade to the latest freeride scripts, or run `cd ~/gt && gt orchestrator start`.
+
 ### Running Gas Town
 
 ```bash
@@ -421,7 +479,7 @@ For **structured rig delivery** (SPEC → design → plan → implement → QA),
 
 | Dependency | Purpose | Notes |
 |------------|---------|--------|
-| **Docker** | Runs NATS | `gt up` starts container `gt-nats` (`nats:latest`, ports **4222** client / **8222** monitor). Docker daemon must be running before `gt up`. |
+| **Docker** | Runs NATS | `gt up` starts container `gt-nats` (`nats:latest`, ports **4222** client / **8222** monitor). Docker daemon must be running before `gt up`. **First pull** of `nats:latest` blocks inside `gt up` until complete; `make do_it_all` then waits up to `WAIT_TIMEOUT_SEC` (default **120s**, use **300** on slow networks) for healthz on **8222**. |
 | **Dolt** 1.82+ | Beads / issue storage | SQL server on port **3307**; started and managed by the Gas Town daemon. Install: `brew install dolt` (macOS) or [dolthub/dolt](https://github.com/dolthub/dolt). |
 | **beads (`bd`)** 0.55+ | Issue CLI | Planner, polecat, and QA run `bd create` / `bd list` / `bd close`. Installed with Gas Town (`make install` or `brew install gastown`). |
 | **Git** 2.25+ | Rigs, worktrees, checkpoints | Orchestrator commits on FSM transitions and pushes on `completed`. Worktree support required for polecats. |
@@ -612,7 +670,10 @@ ps aux | grep opencode | grep -v grep
 | `Rate limited` (429) | Free model overloaded | Wait 10s or use NVIDIA models only |
 | `No models available` | All models in cooldown | Check `cooldowns.json` and restart proxy |
 | `404 Not Found` | Model no longer exists | Update `models.yaml` to remove deprecated models |
-| Agent not starting | NATS unavailable | Ensure NATS container/server is running on port 4222 |
+| Agent not starting | NATS unavailable | `docker ps --filter name=gt-nats`; `curl http://127.0.0.1:8222/healthz`; `gt up` |
+| `make do_it_all` stuck after NATS OK | Orchestrator not ready | Wait for `OK Orchestrator` or `WAIT` lines; `export WAIT_TIMEOUT_SEC=300`; `cd ~/gt && gt orchestrator start` |
+| `fetch_task error: no servers` | Agents before NATS | `gt down && gt up`; `bash scripts/wait-for-gt-stack.sh --with-orchestrator`; `gt rig restart <rig>` |
+| project_setup runs Go on Python rig | Thin profile / dual prompt | `gt rig spec-index <rig> --force`; remove stray `go.mod` under `mayor/rig/` |
 | Proxy not responding | Freeride not running | Run `./freeride --debug > freeride_live.log 2>&1 &` |
 
 ---
