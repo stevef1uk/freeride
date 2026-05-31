@@ -83,6 +83,24 @@ cd gastown && git pull && make install
 
 ## Building and Running
 
+### One-line Setup (New Machine)
+
+If you are setting up a new machine, you can build, start, and test the entire stack (Freeride proxy + Gastown orchestrator) using a single command. 
+
+**IMPORTANT**: You *must* configure your API keys in a `.env` file first before running this command. The proxy will fail to start correctly if keys are missing.
+
+1. Configure API keys (see Standalone Use below for details):
+   ```bash
+   cp .env.template .env
+   # Edit .env and insert your keys (e.g. GEMINI_API_KEY, OPENROUTER_API_KEY)
+   ```
+
+2. Run the all-in-one setup:
+   ```bash
+   make do_it_all
+   ```
+   *This command will build the proxy, run it in the background with `--debug`, build the gastown binaries, boot the orchestrator daemon, and run the simple end-to-end test script automatically.*
+
 ### Standalone Use
 
 1. Build:
