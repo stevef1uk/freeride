@@ -6,7 +6,7 @@
 #   ./scripts/wait-for-gt-stack.sh                 # Freeride + Dolt + NATS healthz
 #   ./scripts/wait-for-gt-stack.sh --freeride-only # before gastown build / gt up
 #   ./scripts/wait-for-gt-stack.sh --with-orchestrator
-#       # after gt up: also require exactly one orchestrator and gt mayor workflow list
+#       # after gt up: one orchestrator + gt mayor workflow list (dedupes extras)
 #   WAIT_TIMEOUT_SEC=180 ./scripts/wait-for-gt-stack.sh
 #
 set -euo pipefail
@@ -19,6 +19,7 @@ NATS_PORT="${NATS_PORT:-4222}"
 NATS_MONITOR_PORT="${NATS_MONITOR_PORT:-8222}"
 GT_ROOT="${GT_ROOT:-${GT_DIR:-$HOME/gt}}"
 TIMEOUT_SEC="${WAIT_TIMEOUT_SEC:-120}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 WAIT_FREERIDE=1
 WAIT_DOLT=1
@@ -84,23 +85,98 @@ dolt_ready() {
 
 nats_ready() {
   tcp_open "$NATS_HOST" "$NATS_PORT" || return 1
-  # gt-nats publishes the monitoring port; TCP-only checks miss a half-started container
   curl -sf --max-time 3 "http://${NATS_HOST}:${NATS_MONITOR_PORT}/healthz" 2>/dev/null \
     | grep -q '"status":"ok"'
 }
 
-orchestrator_ready() {
-  local count=0
+orchestrator_process_count() {
+  local n=0
   if command -v pgrep >/dev/null 2>&1; then
-    count=$(pgrep -fc 'gt orchestrator run' 2>/dev/null || echo 0)
+    while IFS= read -r _; do
+      n=$((n + 1))
+    done < <(pgrep -f 'gt orchestrator run' 2>/dev/null || true)
   fi
-  if [[ "$count" -ne 1 ]]; then
-    return 1
+  if [[ "$n" -eq 0 && -f "$GT_ROOT/daemon/orchestrator.pid" ]]; then
+    local pid
+    pid=$(tr -d '[:space:]' < "$GT_ROOT/daemon/orchestrator.pid" 2>/dev/null || echo "")
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      n=1
+    fi
   fi
+  echo "$n"
+}
+
+dedupe_orchestrator_processes() {
+  local count
+  count=$(orchestrator_process_count)
+  if [[ "$count" -le 1 ]]; then
+    return 0
+  fi
+  if [[ -x "$SCRIPT_DIR/ensure-gt-orchestrator-singleton.sh" ]]; then
+    bash "$SCRIPT_DIR/ensure-gt-orchestrator-singleton.sh" || true
+  else
+    pkill -f 'gt orchestrator run' 2>/dev/null || true
+    sleep 2
+  fi
+}
+
+orchestrator_mcp_ok() {
   if [[ ! -d "$GT_ROOT" ]] || ! command -v gt >/dev/null 2>&1; then
     return 0
   fi
   (cd "$GT_ROOT" && gt mayor workflow list >/dev/null 2>&1)
+}
+
+orchestrator_ready() {
+  local count
+  count=$(orchestrator_process_count)
+  if [[ "$count" -gt 1 ]]; then
+    dedupe_orchestrator_processes
+    count=$(orchestrator_process_count)
+  fi
+  if [[ "$count" -eq 0 ]]; then
+    return 1
+  fi
+  orchestrator_mcp_ok
+}
+
+try_start_orchestrator() {
+  if [[ ! -d "$GT_ROOT" ]] || ! command -v gt >/dev/null 2>&1; then
+    return 1
+  fi
+  echo "WARN no orchestrator process — running: gt orchestrator start" >&2
+  (cd "$GT_ROOT" && gt orchestrator start) >/dev/null 2>&1 || true
+  sleep 2
+}
+
+wait_for_orchestrator() {
+  local label="Orchestrator (singleton + gt mayor workflow list)"
+  local start=$SECONDS
+  local last_log=$start
+  local tried_start=0
+  dedupe_orchestrator_processes
+  while (( SECONDS - start < TIMEOUT_SEC )); do
+    if orchestrator_ready; then
+      echo "OK $label ready ($((SECONDS - start))s)"
+      return 0
+    fi
+    local count
+    count=$(orchestrator_process_count)
+    if [[ "$count" -eq 0 && "$tried_start" -eq 0 && $((SECONDS - start)) -ge 8 ]]; then
+      try_start_orchestrator
+      tried_start=1
+    fi
+    if (( SECONDS - last_log >= 5 )); then
+      echo "WAIT $label: ${count} orchestrator processes, gt_root=${GT_ROOT} ($((SECONDS - start))s)..." >&2
+      if [[ "$count" -gt 1 ]]; then
+        dedupe_orchestrator_processes
+      fi
+      last_log=$SECONDS
+    fi
+    sleep 1
+  done
+  echo "FAIL $label not ready after ${TIMEOUT_SEC}s (processes=$(orchestrator_process_count))" >&2
+  return 1
 }
 
 failed=0
@@ -115,7 +191,7 @@ if [[ "$WAIT_NATS" -eq 1 ]]; then
   wait_for "NATS ($NATS_HOST:$NATS_PORT + :$NATS_MONITOR_PORT healthz)" "$TIMEOUT_SEC" nats_ready || failed=1
 fi
 if [[ "$WAIT_ORCHESTRATOR" -eq 1 ]]; then
-  wait_for "Orchestrator (1 process + gt mayor workflow list)" "$TIMEOUT_SEC" orchestrator_ready || failed=1
+  wait_for_orchestrator || failed=1
 fi
 
 exit "$failed"
