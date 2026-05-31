@@ -24,6 +24,7 @@ wait-for-gt-stack:
 
 # Set up a new machine: build Freeride proxy, start it, build gastown, boot town via e2e script.
 # Requires .env with API keys. Agents call http://localhost:11434 (Freeride), not the Ollama app.
+# E2e uses FREERIDE_ROOT scripts to avoid NATS/orchestrator races (see scripts/wait-for-gt-stack.sh).
 do_it_all: build
 	@test -f .env || (echo "FATAL: create .env from .env.template with API keys before make do_it_all" >&2; exit 1)
 	@echo "Starting Freeride proxy (cloud routes on :11434)..."
@@ -36,8 +37,9 @@ do_it_all: build
 		echo "Running performance script..."; \
 		python3 scripts/freeride_proxy_performance.py; \
 	elif [ -f "gastown/e2e_workflow_test.sh" ]; then \
-		echo "Running e2e workflow test script..."; \
-		DO_IT_ALL=1 bash gastown/e2e_workflow_test.sh; \
+		echo "Running e2e workflow test script (hardened bootstrap)..."; \
+		FREERIDE_ROOT="$$(pwd)" GT_ROOT="$${GT_ROOT:-$$HOME/gt}" DO_IT_ALL=1 \
+			bash gastown/e2e_workflow_test.sh; \
 	else \
 		echo "Rig initialized! Please run your simple script manually."; \
 	fi
