@@ -26,8 +26,8 @@ do_it_all: build
 	# Build gastown
 	cd gastown && make install
 	# Initialize rig and orchestrator
-	gt down || true
-	gt up --orchestrator-only &
+	cd $${GT_ROOT:-$$HOME/gt} && gt down || true
+	cd $${GT_ROOT:-$$HOME/gt} && gt up --orchestrator-only &
 	# Wait for orchestrator to boot, then run the simple script (if it exists)
 	sleep 5
 	@if [ -f "scripts/freeride_proxy_performance.py" ]; then \
