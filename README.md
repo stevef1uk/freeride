@@ -95,7 +95,24 @@ If you are setting up a new machine, you can build, start, and test the entire s
    # Edit .env — GEMINI_API_KEY, OPENROUTER_API_KEY, etc.
    ```
 
-2. Run the all-in-one setup:
+2. Install **host dependencies** once (checked automatically before `make do_it_all`):
+
+   | Tool | Why | Install |
+   |------|-----|---------|
+   | **Docker** (daemon running) | `gt up` starts NATS in `gt-nats` | [Docker Desktop](https://docs.docker.com/get-docker/) |
+   | **Dolt** 1.82+ | Beads SQL on `:3307` | `brew install dolt` or [dolthub/dolt](https://github.com/dolthub/dolt#installation) |
+   | **Go** 1.18+ | Build freeride + gastown | [go.dev/dl](https://go.dev/dl/) |
+   | **Python 3** | `ping_rig` pytest e2e | `brew install python@3.12` or [python.org](https://www.python.org/downloads/) |
+   | **codeindex** | Implement-bead blast radius (`rig-flow` `pre_run`) | `pip install codeindex` — see [Codeindex](#codeindex-dependency-blast-radius). Skip check only with `GT_CODEINDEX=0`. |
+   | **Git** | Rigs and checkpoints | [git-scm.com](https://git-scm.com/downloads) |
+
+   Optional preflight only:
+
+   ```bash
+   make check-do-it-all-deps
+   ```
+
+3. Run the all-in-one setup:
    ```bash
    make do_it_all
    ```
@@ -110,7 +127,7 @@ If you are setting up a new machine, you can build, start, and test the entire s
      - `gt rig restart ping_rig` after the stack is ready
      - `gt rig spec-index ping_rig` so **project_setup** uses the Python stack from SPEC/architecture (not a generic Go scaffold)
 
-3. **First run / slow Docker:** Pulling `nats:latest` happens **inside `gt up`** (Docker blocks until the image is local). That can take several minutes with no extra output — normal. After `gt up` returns, the wait script allows up to **120s** (default) for NATS health and orchestrator readiness. On a slow network, set a longer timeout before `make do_it_all`:
+4. **First run / slow Docker:** Pulling `nats:latest` happens **inside `gt up`** (Docker blocks until the image is local). That can take several minutes with no extra output — normal. After `gt up` returns, the wait script allows up to **120s** (default) for NATS health and orchestrator readiness. On a slow network, set a longer timeout before `make do_it_all`:
 
    ```bash
    export WAIT_TIMEOUT_SEC=300
@@ -124,9 +141,9 @@ If you are setting up a new machine, you can build, start, and test the entire s
    bash scripts/wait-for-gt-stack.sh --with-orchestrator
    ```
 
-4. **Stop local Ollama** before step 2 if it uses port **11434** (`pkill ollama` or quit the menu-bar app on macOS).
+5. **Stop local Ollama** before step 3 if it uses port **11434** (`pkill ollama` or quit the menu-bar app on macOS).
 
-5. **Fresh or deleted `~/gt`:** Safe to remove the town and re-run; bootstrap clears duplicate `gt orchestrator run` processes before `gt up` and does not kill the sole orchestrator immediately after `gt up`.
+6. **Fresh or deleted `~/gt`:** Safe to remove the town and re-run; bootstrap clears duplicate `gt orchestrator run` processes before `gt up` and does not kill the sole orchestrator immediately after `gt up`.
 
 See [Gas Town Integration — `make do_it_all` bootstrap](#make-do_it_all-bootstrap) for troubleshooting (NATS, orchestrator, project_setup stack).
 
@@ -419,6 +436,7 @@ Freeride ships helper scripts used when `FREERIDE_ROOT` is set (as `make do_it_a
 
 | Script | Role |
 |--------|------|
+| `scripts/check-do-it-all-deps.sh` | Fail fast if Docker (daemon), Dolt, Go, Python 3, Git, `.env`, submodule, or **codeindex** (unless `GT_CODEINDEX=0`) are missing; prints install links. Run via `make check-do-it-all-deps` or at start of `do_it_all` / e2e. |
 | `scripts/wait-for-gt-stack.sh` | Poll Freeride (`:11434`), Dolt (`:3307`), NATS (`:4222` + `http://127.0.0.1:8222/healthz`). `--freeride-only` before `gt up`; `--with-orchestrator` after `gt up`. |
 | `scripts/ensure-gt-orchestrator-singleton.sh` | Stops **duplicate** `gt orchestrator run` processes only (leaves a single process alone). Run before `gt down` / `gt up`, not immediately after `gt up`. |
 
