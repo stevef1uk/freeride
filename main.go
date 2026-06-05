@@ -1170,6 +1170,7 @@ func isComplex(body map[string]interface{}) bool {
 func isMassiveModel(modelName string) bool {
 	lower := strings.ToLower(modelName)
 	return strings.Contains(lower, "671b") ||
+		strings.Contains(lower, "550b") ||
 		strings.Contains(lower, "397b") ||
 		strings.Contains(lower, "235b") ||
 		strings.Contains(lower, "1t") ||

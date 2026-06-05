@@ -83,6 +83,7 @@ groqPerformance:
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"  # OpenRouter; verified chat 2026-06-02
   - "nousresearch/hermes-3-llama-3.1-405b:free"
   - "qwen/qwen3-coder:free"
   - "meta-llama/llama-3.3-70b-instruct:free"
@@ -116,7 +117,7 @@ excludeModels:
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
   - "nvidia/llama-3.1-nemotron-70b-instruct"   # listed in /v1/models but chat 404
-  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"  # chat 404 for this account
+  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"  # NVIDIA NIM 404; not routed on OpenRouter
   - "meta-llama/llama-3.2-1b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-3b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-1b-instruct"      # TOO SMALL
