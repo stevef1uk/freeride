@@ -86,7 +86,6 @@ groqPerformance:
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
   - "qwen/qwen3-coder:free"
-  - "nvidia/nemotron-3-ultra-550b-a55b:free"  # OpenRouter; verified chat 2026-06-02
   - "nousresearch/hermes-3-llama-3.1-405b:free"
   - "meta-llama/llama-3.3-70b-instruct:free"
 
@@ -133,6 +132,10 @@ excludeModels:
   - "nvidia/nemotron-3-nano-30b-a3b"         # REASONING MODEL — produces reasoning_content, no content
   - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" # REASONING MODEL
   - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # REASONING MODEL
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"  # ANALYSIS-ONLY — cannot execute CMD/WRITE/EDIT markers
+  - "nvidia/nemotron-3-ultra-550b-a55b"       # ANALYSIS-ONLY
+  - "nvidia/nemotron-3-super-120b-a12b"       # ANALYSIS-ONLY
+  - "nvidia/llama-3.3-nemotron-super-49b-v1"  # ANALYSIS-ONLY
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
 # capable cloud is tried first; local llama-server is fallback only (end of candidate list).
