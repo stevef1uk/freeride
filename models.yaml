@@ -133,6 +133,7 @@ excludeModels:
   - "nvidia/nemotron-3-ultra-550b-a55b"       # ANALYSIS-ONLY
   - "nvidia/nemotron-3-super-120b-a12b"       # ANALYSIS-ONLY
   - "nvidia/llama-3.3-nemotron-super-49b-v1"  # ANALYSIS-ONLY
+  - "meta/llama-3.3-70b-instruct"              # NIM timeout — cannot handle context
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
 # capable cloud is tried first; local llama-server is fallback only (end of candidate list).
