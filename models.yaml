@@ -16,6 +16,8 @@ rolePrepend:
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
+  - pattern: "nemotron-3-super-120b-a12b"
+    boost: 10.0
   - pattern: "gemini-3.5-flash"
     boost: 8.0
   - pattern: "gemini-2.5-flash-lite"
@@ -83,6 +85,7 @@ groqPerformance:
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
+  - "nvidia/nemotron-3-super-120b-a12b:free"
   - "nvidia/nemotron-3-ultra-550b-a55b:free"  # OpenRouter; verified chat 2026-06-02
   - "nousresearch/hermes-3-llama-3.1-405b:free"
   - "qwen/qwen3-coder:free"
