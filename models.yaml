@@ -130,6 +130,9 @@ excludeModels:
   - "nvidia/llama-3.1-nemotron-nano-vl-8b-v1" # TOO SMALL
   - "nvidia/nemotron-nano-12b-v2-vl"         # TOO SMALL
   - "nvidia/nemotron-mini-4b-instruct"      # TOO SMALL
+  - "nvidia/nemotron-3-nano-30b-a3b"         # REASONING MODEL — produces reasoning_content, no content
+  - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" # REASONING MODEL
+  - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # REASONING MODEL
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
 # capable cloud is tried first; local llama-server is fallback only (end of candidate list).
