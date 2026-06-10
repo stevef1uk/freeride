@@ -87,7 +87,6 @@ groqPerformance:
 reliableFree:
   - "qwen/qwen3-coder:free"
   - "nousresearch/hermes-3-llama-3.1-405b:free"
-  - "meta-llama/llama-3.3-70b-instruct:free"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
 # 70b/nemotron-super for agents; 11b for lighter tasks.
@@ -95,7 +94,6 @@ nvidiaReliable:
   - "nvidia/llama-3.3-nemotron-super-49b-v1"
   - "nvidia/llama-3.3-nemotron-super-49b-v1.5"
   - "nvidia/nemotron-3-super-120b-a12b"
-  - "meta/llama-3.3-70b-instruct"
   - "meta/llama-3.2-11b-vision-instruct"
 
 # Priority 2.5: Complex-task NVIDIA models (always tried first for complex requests)
@@ -104,7 +102,6 @@ nvidiaComplex:
   - "nvidia/llama-3.3-nemotron-super-49b-v1"
   - "nvidia/llama-3.3-nemotron-super-49b-v1.5"
   - "nvidia/nemotron-3-super-120b-a12b"
-  - "meta/llama-3.3-70b-instruct"
 
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
