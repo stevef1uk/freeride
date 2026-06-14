@@ -13,6 +13,9 @@ rolePrepend:
     - "anthropic/claude-3.5-sonnet"
   architect:
     - "anthropic/claude-3.5-sonnet"
+  qa:
+    - "google/gemini-3.5-flash"
+    - "google/gemini-2.5-flash-lite"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
