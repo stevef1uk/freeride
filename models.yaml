@@ -138,6 +138,8 @@ excludeModels:
   - "nvidia/nemotron-3-super-120b-a12b:free"   # ANALYSIS-ONLY (OpenRouter)
   - "nvidia/llama-3.3-nemotron-super-49b-v1"   # ANALYSIS-ONLY
   - "meta/llama-3.3-70b-instruct"              # NIM timeout — cannot handle context
+  - "qwen/qwen3-next-80b-a3b-instruct:free"     # A3B sparsification — erratic on agent tasks
+  - "qwen/qwen3-next-80b-a3b-instruct"          # A3B sparsification — erratic on agent tasks
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
 # capable cloud is tried first; local llama-server is fallback only (end of candidate list).
@@ -182,7 +184,7 @@ localOpenAI:
   - id: "local/qwen3-coder-30b"
     endpoint: "http://127.0.0.1:8090"
     model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
-    contextSlots: 16384  # must match llama-server -c; used to cap max_tokens in Freeride
+    contextSlots: 32768  # must match llama-server -c; used to cap max_tokens in Freeride
     cooldown: "2m"
 
 # Notes:

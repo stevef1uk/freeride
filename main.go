@@ -1504,7 +1504,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		upstreamTimeout := 60 * time.Second
 		if isLocalOpenAIModelID(candidate) {
-			upstreamTimeout = 180 * time.Second
+			upstreamTimeout = 600 * time.Second
 		}
 		upCtx, upCancel := context.WithTimeout(context.Background(), upstreamTimeout)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
