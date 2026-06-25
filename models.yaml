@@ -186,6 +186,7 @@ localOpenAI:
     model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
     contextSlots: 32768  # must match llama-server -c; used to cap max_tokens in Freeride
     cooldown: "2m"
+    promptSuffix: "/no_think"  # appended to last user msg; disables reasoning on this model
 
 # Notes:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)

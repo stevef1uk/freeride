@@ -62,6 +62,7 @@ type localOpenAIModel struct {
 	ContextSlots int    `yaml:"contextSlots,omitempty"` // llama-server -c; caps max_tokens so prompt+gen fits
 	Cooldown     string `yaml:"cooldown,omitempty"`
 	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"` // optional: env var for Bearer token; if set and empty, no Authorization header
+	PromptSuffix string `yaml:"promptSuffix,omitempty"` // appended to last user message (e.g. "/no_think")
 }
 
 // blockSmallCloudWhenLocalGPUConfig lists cloud model ids/patterns to skip when localOpenAI
@@ -1466,6 +1467,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			sanitizeBody(currentBody)
 			if localOpenAI != nil {
 				capLocalRequestContext(currentBody, localOpenAI.ContextSlots)
+				if localOpenAI.PromptSuffix != "" {
+					if msgs, ok := currentBody["messages"].([]interface{}); ok && len(msgs) > 0 {
+						if last, ok := msgs[len(msgs)-1].(map[string]interface{}); ok {
+							if c, ok := last["content"].(string); ok {
+								last["content"] = c + "\n" + localOpenAI.PromptSuffix
+							}
+						}
+					}
+				}
 			}
 			outboundBody, _ = json.Marshal(currentBody)
 
