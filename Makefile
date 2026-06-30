@@ -38,7 +38,8 @@ do_it_all: check-do-it-all-deps build
 	@if [ -f "scripts/freeride_proxy_performance.py" ]; then \
 		echo "Running performance script..."; \
 		python3 scripts/freeride_proxy_performance.py; \
-	elif [ -f "gastown/e2e_workflow_test.sh" ]; then \
+	fi
+	@if [ -f "gastown/e2e_workflow_test.sh" ]; then \
 		echo "Running e2e workflow test script (hardened bootstrap)..."; \
 		FREERIDE_ROOT="$$(pwd)" GT_ROOT="$${GT_ROOT:-$$HOME/gt}" DO_IT_ALL=1 \
 			bash gastown/e2e_workflow_test.sh; \
