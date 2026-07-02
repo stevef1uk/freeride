@@ -422,13 +422,40 @@ Create or update `settings/config.json` in your Gas Town project root:
 }
 ```
 
-Fresh `gt install` defaults map **polecat → gt-agent-gemini** (`google/gemini-3.5-flash` via Freeride direct Gemini routing). Requires `GEMINI_API_KEY` in Freeride’s `.env` — see [Google Gemini API](#google-gemini-api-direct). Existing towns: set `"polecat": "gt-agent-gemini"` in `role_agents` and add the `gt-agent-gemini` agent block above (or re-merge from `DefaultFreerideAgents()` in `gastown/internal/config/freeride_agents.go`).
+Fresh `gt install` defaults map **polecat → gt-agent-gemini** (`google/gemini-3.5-flash` via Freeride direct Gemini routing). Requires `GEMINI_API_KEY` in Freeride’s `.env` — see [Google Gemini API](#google-gemini-api-direct). Existing towns: set `"polecat": "gt-agent-gemini"` in `role_agents` and add the `gt-agent-gemini` agent block above.
 
 **Key settings:**
 - `session_transport`: Set to `"nats"` for NATS-based session management (no tmux required)
 - `default_agent`: `"gt-agent-local"` for headless automated work
 - `role_agents.crew`: `"opencode"` for interactive TUI-based crew members
 - `gt-agent-local.env.LLM_ENDPOINT`: Points directly to Freeride's OpenAI-compatible endpoint
+
+### Freeride Model Configuration
+
+Default agent-to-model mappings live in **`gastown/freeride_models.json`** (applied at `gt install` and whenever `DefaultFreerideAgents()` / `DefaultFreerideRoleAgents()` are called). Edit this file to change which LLM each `gt-agent` profile uses — no recompile needed:
+
+```json
+{
+  "agents": {
+    "gt-agent-fast": {
+      "model": "ollama/ministral-3:8b"
+    },
+    "gt-agent-mayor-fast": {
+      "model": "ollama/ministral-3:8b",
+      "extra_env": {
+        "LLM_TURN_TIMEOUT": "30s",
+        "GT_AGENT_CMD_TIMEOUT": "75s"
+      }
+    }
+  },
+  "role_agents": {
+    "polecat": "gt-agent-gemini",
+    "mayor": "gt-agent-local"
+  }
+}
+```
+
+The file is discovered at `gastown/freeride_models.json` relative to the working directory. Override the path with the `FREERIDE_MODELS_CONFIG` environment variable. If the file is missing or unreadable, compiled-in defaults are used as a fallback.
 
 ### `make do_it_all` bootstrap
 
