@@ -34,7 +34,7 @@ do_it_all: check-do-it-all-deps build
 	@bash scripts/wait-for-gt-stack.sh --freeride-only
 	@echo "Building gastown..."
 	@cd gastown && make install
-	@gt install $${GT_ROOT:-$$HOME/gt} || true
+	@gt install $${GT_ROOT:-$$HOME/gt}
 	@if [ -f "scripts/freeride_proxy_performance.py" ]; then \
 		echo "Running performance script..."; \
 		python3 scripts/freeride_proxy_performance.py; \
