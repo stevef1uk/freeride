@@ -3415,10 +3415,10 @@ func selectCandidates(ctx candidateContext) []string {
 	// Tier 0.06: Groq priority tier (immediately after Cerebras).
 	candidates = appendGroqPriorityCandidates(candidates, ctx)
 
-	// Gas Town roles: try requested NVIDIA/meta/Gemini/Cerebras model (after Cerebras priority tier).
+	// Gas Town roles: try requested NVIDIA/meta/Gemini/Cerebras/DeepSeek model (after Cerebras priority tier).
 	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
 		om := strings.ToLower(ctx.originalModel)
-		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") || strings.HasPrefix(om, "cerebras/") {
+		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") || strings.HasPrefix(om, "cerebras/") || strings.HasPrefix(om, "deepseek/") {
 			if !candidateListContains(candidates, ctx.originalModel) {
 				candidates = append(candidates, ctx.originalModel)
 			}
