@@ -1220,6 +1220,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				keys = append(keys, k)
 			}
 			log.Printf("[DEBUG] Incoming JSON keys: %v", keys)
+			if mv, exists := bodyMap["model"]; exists {
+				log.Printf("[DEBUG] model field type=%T value='%v'", mv, mv)
+			}
 		}
 		if m, ok := bodyMap["model"].(string); ok {
 			originalModel = m
@@ -1274,6 +1277,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if role == "polecat" {
 		ctx.isComplexRequest = true
+	}
+
+	if debugMode && originalModel != "" {
+		log.Printf("[DEBUG] originalModel='%s', role='%s'", originalModel, role)
 	}
 
 	candidates := selectCandidates(ctx)
@@ -1346,8 +1353,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			strings.HasPrefix(candidate, "qwen/") ||
 			strings.HasPrefix(candidate, "abacusai/") ||
 			strings.HasPrefix(candidate, "ai21labs/") ||
-			strings.HasPrefix(candidate, "01-ai/") ||
-			strings.HasPrefix(candidate, "deepseek/")
+			strings.HasPrefix(candidate, "01-ai/")
 
 		isOllama := strings.HasPrefix(candidate, "ollama/")
 		isCerebras := strings.HasPrefix(candidate, "cerebras/")
@@ -3416,11 +3422,25 @@ func selectCandidates(ctx candidateContext) []string {
 	candidates = appendGroqPriorityCandidates(candidates, ctx)
 
 	// Gas Town roles: try requested NVIDIA/meta/Gemini/Cerebras/DeepSeek model (after Cerebras priority tier).
+	if ctx.role != "" && ctx.originalModel != "" {
+		if ctx.isCooldown(ctx.originalModel) {
+			log.Printf("[DEBUG] Tier0 SKIP: %s is in COOLDOWN", ctx.originalModel)
+		} else if ctx.isExcluded(ctx.originalModel) {
+			log.Printf("[DEBUG] Tier0 SKIP: %s is EXCLUDED", ctx.originalModel)
+		} else {
+			log.Printf("[DEBUG] Tier0 OK: %s is eligible, adding to candidates", ctx.originalModel)
+		}
+	} else if ctx.role != "" && ctx.originalModel == "" {
+		log.Printf("[DEBUG] Tier0: role='%s' but originalModel is EMPTY", ctx.role)
+	}
 	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
 		om := strings.ToLower(ctx.originalModel)
 		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") || strings.HasPrefix(om, "cerebras/") || strings.HasPrefix(om, "deepseek/") {
 			if !candidateListContains(candidates, ctx.originalModel) {
+				log.Printf("[DEBUG] Tier0 APPEND: adding %s to candidates (current len=%d)", ctx.originalModel, len(candidates))
 				candidates = append(candidates, ctx.originalModel)
+			} else {
+				log.Printf("[DEBUG] Tier0 SKIPAPPEND: %s already in candidates list (len=%d)", ctx.originalModel, len(candidates))
 			}
 		} else if strings.HasPrefix(om, "google/") && geminiDirectEnabledFor(ctx.conf) && lookupGeminiModel(ctx.originalModel) != nil {
 			candidates = append(candidates, ctx.originalModel)
@@ -3791,10 +3811,12 @@ func selectCandidates(ctx candidateContext) []string {
 	candidates = uniqueCandidates
 
 	// Final role-based filtering (models.yaml massiveOnlyRoles)
+	// Always keep the user's explicitly requested model regardless of size heuristic,
+	// preserving its original position in the candidate list.
 	if roleRequiresMassiveModel(ctx.role) {
 		var massiveCandidates []string
 		for _, c := range candidates {
-			if isMassiveModel(c) || isLocalOpenAIModelID(c) {
+			if isMassiveModel(c) || isLocalOpenAIModelID(c) || (ctx.originalModel != "" && c == ctx.originalModel) {
 				massiveCandidates = append(massiveCandidates, c)
 			}
 		}

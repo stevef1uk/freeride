@@ -8,11 +8,11 @@ massiveOnlyRoles:
 # Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
 rolePrepend:
   polecat:
-    - "anthropic/claude-sonnet-4.6"
+    - "deepseek/deepseek-v4-flash"
   planner:
-    - "anthropic/claude-sonnet-4.6"
+    - "deepseek/deepseek-v4-flash"
   architect:
-    - "anthropic/claude-sonnet-4.6"
+    - "deepseek/deepseek-v4-flash"
   qa:
     - "google/gemini-3.5-flash"
     - "google/gemini-2.5-flash-lite"
