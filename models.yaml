@@ -109,6 +109,7 @@ nvidiaComplex:
 curatedPaid:
   - "openai/gpt-4o-mini"                     # $0.15 (In) / $0.60 (Out) per 1M
   - "google/gemini-2.0-flash-001"            # $0.10 (In) / $0.40 (Out) per 1M
+  - "deepseek/deepseek-v4-flash"             # $0.09 (In) / $0.18 (Out) per 1M — 284B MoE, 1M context
   - "anthropic/claude-3.5-sonnet"            # $3.00 (In) / $15.00 (Out) per 1M
 
 # Models to exclude (broken, deprecated, or rate-limited)
