@@ -3435,7 +3435,7 @@ func selectCandidates(ctx candidateContext) []string {
 	}
 	if ctx.role != "" && ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
 		om := strings.ToLower(ctx.originalModel)
-		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") || strings.HasPrefix(om, "cerebras/") || strings.HasPrefix(om, "deepseek/") {
+		if strings.HasPrefix(om, "nvidia/") || strings.HasPrefix(om, "meta/") || strings.HasPrefix(om, "cerebras/") || (strings.HasPrefix(om, "deepseek/") && ctx.allowPaid) {
 			if !candidateListContains(candidates, ctx.originalModel) {
 				log.Printf("[DEBUG] Tier0 APPEND: adding %s to candidates (current len=%d)", ctx.originalModel, len(candidates))
 				candidates = append(candidates, ctx.originalModel)
