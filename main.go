@@ -1456,8 +1456,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 
 			currentBody["model"] = candidate
-			// Strip :free suffix (provider doesn't use it)
-			currentBody["model"] = strings.TrimSuffix(candidate, ":free")
 			// Strip ollama/ prefix
 			currentBody["model"] = strings.TrimPrefix(currentBody["model"].(string), "ollama/")
 			// Strip cerebras/ prefix
