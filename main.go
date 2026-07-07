@@ -3733,25 +3733,27 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 3.5: Other Free OpenRouter models
-	for _, m := range ctx.models {
-		already := false
-		if m.ID == ctx.originalModel {
-			already = true
-		}
-		for _, c := range candidates {
-			if c == m.ID {
+	// Tier 3.5: Other Free OpenRouter models (skip when allowPaid to prioritize paid fallbacks)
+	if !ctx.allowPaid {
+		for _, m := range ctx.models {
+			already := false
+			if m.ID == ctx.originalModel {
 				already = true
-				break
 			}
-		}
-		if already {
-			continue
-		}
+			for _, c := range candidates {
+				if c == m.ID {
+					already = true
+					break
+				}
+			}
+			if already {
+				continue
+			}
 
-		isFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
-		if isFree && !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) {
-			candidates = append(candidates, m.ID)
+			isFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
+			if isFree && !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) {
+				candidates = append(candidates, m.ID)
+			}
 		}
 	}
 
@@ -3769,8 +3771,8 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 5: Curated Paid Fallbacks (models.yaml curatedPaid)
-	if ctx.isComplexRequest && ctx.allowPaid {
+	// Tier 5: Curated Paid Fallbacks (models.yaml curatedPaid) — moved up when allowPaid
+	if ctx.allowPaid && ctx.isComplexRequest {
 		for _, paidID := range ctx.conf.CuratedPaid {
 			if !ctx.isCooldown(paidID) && paidID != ctx.originalModel {
 				exists := false
