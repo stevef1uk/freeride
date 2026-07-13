@@ -1481,6 +1481,16 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			// Per-provider max_tokens cap — applied just before marshaling
+			if mt, ok := currentBody["max_tokens"].(float64); ok {
+				if strings.Contains(targetURL, "groq.com") && mt > 4096 {
+					log.Printf("[CAP] Groq max_tokens %.0f → 4096", mt)
+					currentBody["max_tokens"] = float64(4096)
+				} else if strings.Contains(targetURL, "cerebras.ai") && mt > 8192 {
+					log.Printf("[CAP] Cerebras max_tokens %.0f → 8192", mt)
+					currentBody["max_tokens"] = float64(8192)
+				}
+			}
 			outboundBody, _ = json.Marshal(currentBody)
 
 			if debugMode {
@@ -2465,15 +2475,8 @@ func sanitizeBody(body map[string]interface{}) {
 	delete(body, "output_config")
 	delete(body, "anthropic-version")
 
-	// 5. Cap max_tokens to prevent context overflow (OpenRouter free models often have 32k limits)
-	if mt, ok := body["max_tokens"].(float64); ok {
-		if mt > 16384 {
-			body["max_tokens"] = 16384
-		}
-	} else if _, ok := body["max_tokens"]; !ok {
-		// Default to 16384 if not specified — architect needs room for full heredocs
-		body["max_tokens"] = 16384
-	}
+	// 5. Don't cap max_tokens globally — models handle their own limits.
+	// Per-provider caps are applied at the routing layer where targetURL is known.
 
 	// 5. Convert 'prompt' to a user message (OpenCode legacy support)
 	if prompt, ok := body["prompt"].(string); ok && prompt != "" {
