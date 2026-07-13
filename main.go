@@ -2467,12 +2467,12 @@ func sanitizeBody(body map[string]interface{}) {
 
 	// 5. Cap max_tokens to prevent context overflow (OpenRouter free models often have 32k limits)
 	if mt, ok := body["max_tokens"].(float64); ok {
-		if mt > 4096 {
-			body["max_tokens"] = 4096
+		if mt > 16384 {
+			body["max_tokens"] = 16384
 		}
 	} else if _, ok := body["max_tokens"]; !ok {
-		// Default to 4096 if not specified, to be safe
-		body["max_tokens"] = 4096
+		// Default to 16384 if not specified — architect needs room for full heredocs
+		body["max_tokens"] = 16384
 	}
 
 	// 5. Convert 'prompt' to a user message (OpenCode legacy support)
