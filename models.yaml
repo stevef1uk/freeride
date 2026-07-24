@@ -140,6 +140,8 @@ excludeModels:
   - "meta/llama-3.3-70b-instruct"              # NIM timeout — cannot handle context
   - "qwen/qwen3-next-80b-a3b-instruct:free"     # A3B sparsification — erratic on agent tasks
   - "qwen/qwen3-next-80b-a3b-instruct"          # A3B sparsification — erratic on agent tasks
+  - "allam-2-7b"                                  # TOO SMALL (7B) — produces garbled output on agent tasks
+  - "allam-2-7b:free"                             # TOO SMALL (7B)
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
 # capable cloud is tried first; local llama-server is fallback only (end of candidate list).
