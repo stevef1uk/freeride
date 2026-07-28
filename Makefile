@@ -34,7 +34,11 @@ do_it_all: check-do-it-all-deps build
 	@bash scripts/wait-for-gt-stack.sh --freeride-only
 	@echo "Building gastown..."
 	@cd gastown && make install
-	@gt install $${GT_ROOT:-$$HOME/gt}
+	@if [ -f "$${GT_ROOT:-$$HOME/gt}/mayor/town.json" ]; then \
+		echo "Gas Town HQ already initialized, skipping..."; \
+	else \
+		gt install $${GT_ROOT:-$$HOME/gt}; \
+	fi
 	@if [ -f "scripts/freeride_proxy_performance.py" ]; then \
 		echo "Running performance script..."; \
 		python3 scripts/freeride_proxy_performance.py; \
