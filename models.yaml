@@ -8,7 +8,7 @@ massiveOnlyRoles:
 # Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
 rolePrepend:
   polecat:
-    - "deepseek/deepseek-v4-flash"
+    - "cerebras/gpt-oss-120b"
   planner:
     - "deepseek/deepseek-v4-flash"
   architect:
