@@ -1186,7 +1186,8 @@ func isMassiveModel(modelName string) bool {
 		strings.Contains(lower, "sonnet") ||
 		strings.Contains(lower, "gpt-4") ||
 		strings.Contains(lower, "gemini") ||
-		strings.Contains(lower, "opus")
+		strings.Contains(lower, "opus") ||
+		strings.Contains(lower, "deepseek-v4")
 }
 
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -3313,7 +3314,7 @@ func appendCerebrasPriorityCandidates(candidates []string, ctx candidateContext)
 			candidates = append(candidates, id)
 		}
 	}
-	if ctx.isComplexRequest && ctx.allowPaid {
+	if ctx.isComplexRequest && ctx.allowPaid && ctx.role != "polecat" {
 		for _, cid := range ctx.conf.CerebrasPerformance {
 			add(cid)
 		}

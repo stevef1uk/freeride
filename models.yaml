@@ -9,6 +9,7 @@ massiveOnlyRoles:
 rolePrepend:
   polecat:
     - "cerebras/gpt-oss-120b"
+    - "deepseek/deepseek-v4-flash"
   planner:
     - "deepseek/deepseek-v4-flash"
   architect:
