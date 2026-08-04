@@ -109,6 +109,7 @@ nvidiaComplex:
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
   - "deepseek/deepseek-v4-flash"             # $0.09 (In) / $0.18 (Out) per 1M — 284B MoE, 1M context
+  - "openai/gpt-5.6-luna"                    # $0.10 (In) / $0.60 (Out) per 1M — fast, 1M context, 128K output
   - "google/gemini-2.0-flash-001"            # $0.10 (In) / $0.40 (Out) per 1M
   - "openai/gpt-4o-mini"                     # $0.15 (In) / $0.60 (Out) per 1M
   - "anthropic/claude-3.5-sonnet"            # $3.00 (In) / $15.00 (Out) per 1M
