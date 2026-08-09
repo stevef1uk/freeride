@@ -681,6 +681,45 @@ tail -f ~/gt/logs/orchestrator.log
 
 **Full rig rewind** (beads, instances, dev servers): `bash gastown/scripts/reset-rig-orchestrator.sh --force` from a checkout that includes the submodule (see gastown script header for `GT_ROOT` / `RIG`).
 
+### Rig audit / watchdog
+
+Rig deletions and registry writes are audited so a wipe (e.g. `rm -rf` of a rig or
+`gt rig remove` mid-session) can be traced after the fact. Everything lives
+**outside the town** under `~/.config/gt-watchdog/` (override with
+`GT_WATCHDOG_DIR`) so `rm -rf ~/gt` cannot destroy the evidence.
+
+| Artifact | Contents |
+|----------|----------|
+| `exec-audit.jsonl` | Every agent shell command verbatim (command, workdir, role, PID, outcome) from `runOrchestratedCommand` |
+| `rigs-audit.jsonl` | Every `rigs.json` write with caller stack, PID/PPID, rig names + count (`SaveRigsConfig`) |
+| `rig-canary.log` | inotify deletion/rename events for town rig paths, with best-effort actor PID |
+| `.enabled` | Presence enables auditing; remove to disable (checked live by gt/gt-agent writers) |
+
+**Control script** (systemd `--user`, needs `XDG_RUNTIME_DIR` for `systemctl --user`):
+
+```bash
+~/.config/gt-watchdog/rig-watchdog-ctl.sh status          # enabled state, sizes, services
+~/.config/gt-watchdog/rig-watchdog-ctl.sh enable          # touch .enabled; start canary + purge timer
+~/.config/gt-watchdog/rig-watchdog-ctl.sh disable         # stop services; remove .enabled
+~/.config/gt-watchdog/rig-watchdog-ctl.sh purge [days]    # rotate/trim audit logs (default keep 7 days)
+```
+
+**Disk management:** audit logs are capped at ~10MB each (writers stop appending
+past the cap). A daily systemd timer (`gt-watchdog-purge.timer`) runs
+`rig_purge.sh`, gzipping any log over the cap into `*.gz` archives and deleting
+archives older than the retention window. `rig-watchdog-ctl.sh purge 14` forces
+a run with a 14-day window.
+
+**Source gating:** `internal/config/watchdog.go` (`WatchdogDir` /
+`WatchdogEnabled` / `MaxAuditFileBytes`) is used by both the `internal/config`
+rigs-audit writer and `cmd/gt-agent/orchestrated_audit.go` exec-audit writer.
+Test binaries (`.test`) and temp-town paths are skipped automatically.
+
+**Note:** a hardlink mirror of rigs was tried and removed — it did not survive
+wipe-then-recreate cycles (the timer overwrote the pre-wipe snapshot with the
+empty recreated rig) and only duplicated session-log content already captured by
+the exec audit.
+
 ### Verification
 
 #### Check the proxy is running:
