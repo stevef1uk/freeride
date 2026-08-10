@@ -23,7 +23,7 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
 1. Cerebras budget / performance (from `models.yaml`)
 2. **Gemini API direct** (`geminiModels` in `models.yaml`, requires `GEMINI_API_KEY`)
 3. **Groq API direct** (`groqBudget` / `groqPerformance` in `models.yaml`, requires `GROQ_API_KEY`)
-4. Role prepends (`rolePrepend`, when `--allow-paid`)
+4. Role prepends (`rolePrepend`, when `--allow-paid`) — tried **before** the role's `originalModel` for roles in `rolePrependBeforeOriginal` (default `architect`, `planner`, `qa`); for other roles (e.g. `polecat`) the `originalModel` stays first and prepends are fallback
 5. Reliable free + NVIDIA lists, Ollama cloud, original model
 6. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
 7. IDE bridges (`--allow-ide`)
@@ -799,8 +799,12 @@ Run Freeride with `./freeride --debug --allow-local-openai`. Traffic uses cloud 
 # Freeride Model Configuration
 
 massiveOnlyRoles: [architect, mayor, planner, polecat]
+# Roles whose rolePrepend models are tried BEFORE their originalModel (--allow-paid only).
+# Roles not listed keep their originalModel first and use rolePrepend as fallback (e.g. polecat).
+rolePrependBeforeOriginal: [architect, planner, qa]
 rolePrepend:
-  polecat: ["anthropic/claude-3.5-sonnet"]  # only with --allow-paid
+  polecat: ["cerebras/gpt-oss-120b", "deepseek/deepseek-v4-flash"]  # only with --allow-paid; deepseek tried first
+  architect: ["openai/gpt-5.6-luna", "cerebras/gpt-oss-120b"]
 
 # Priority 0.15: Google Gemini API free tier (requires GEMINI_API_KEY)
 geminiModels:

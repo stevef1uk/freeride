@@ -5,7 +5,38 @@ massiveOnlyRoles:
   - planner
   - polecat
 
+# Extra substring patterns that classify a model as "massive" — fully config-driven,
+# no hardcoded list in Go. Lets massiveOnlyRoles routes use curated flagships
+# like openai/gpt-5.6-luna without code changes.
+massiveModelPatterns:
+  - "671b"
+  - "550b"
+  - "397b"
+  - "235b"
+  - "1t"
+  - "120b"
+  - "large"
+  - "480b"
+  - "405b"
+  - "90b"
+  - "80b"
+  - "70b"
+  - "30b"
+  - "sonnet"
+  - "gpt-4"
+  - "gpt-5.6"
+  - "gemini"
+  - "opus"
+  - "deepseek-v4"
+
 # Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
+# Roles in rolePrependBeforeOriginal try these BEFORE their originalModel; other
+# roles (e.g. polecat) keep their originalModel first and use prepends as fallback.
+rolePrependBeforeOriginal:
+  - architect
+  - planner
+  - qa
+
 rolePrepend:
   polecat:
     - "openai/gpt-5.6-luna"

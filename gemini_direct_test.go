@@ -107,6 +107,7 @@ func TestSelectCandidates_PolecatWithLocalGPU_IncludesGemini(t *testing.T) {
 		BlockSmallCloudWhenLocalGPU: blockSmallCloudWhenLocalGPUConfig{
 			Patterns: []string{"mini", "nano"},
 		},
+		MassiveModelPatterns: testMassivePatterns,
 	}
 	configMutex.Lock()
 	globalModelsConfig = conf

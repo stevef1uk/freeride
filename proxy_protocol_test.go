@@ -218,6 +218,7 @@ func TestRoleBasedPrioritization_Isolated(t *testing.T) {
 			Endpoint: upstream.URL,
 			Model:    "upstream-model",
 		}},
+		MassiveModelPatterns: []string{"70b"},
 	}
 	configMutex.Unlock()
 	allowLocalOpenAI = true

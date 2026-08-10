@@ -87,9 +87,11 @@ type modelsConfig struct {
 	IdeModels                   []ideModel                        `yaml:"ideModels"`
 	LocalOpenAI                 []localOpenAIModel                `yaml:"localOpenAI"`
 	RolePrepend                 map[string][]string               `yaml:"rolePrepend"`
+	RolePrependBeforeOriginal   []string                          `yaml:"rolePrependBeforeOriginal"`
 	RoleLocalFirst              map[string][]string               `yaml:"roleLocalFirst"`
 	RoleLocalOnly               []string                          `yaml:"roleLocalOnly"`
 	MassiveOnlyRoles            []string                          `yaml:"massiveOnlyRoles"`
+	MassiveModelPatterns        []string                          `yaml:"massiveModelPatterns"`
 	FreeModelScoreBoost         []scoreBoost                      `yaml:"freeModelScoreBoost"`
 	TrustedScoringNames         []string                          `yaml:"trustedScoringNames"`
 	CompatModels                []compatModel                     `yaml:"compatModels"`
@@ -160,6 +162,25 @@ func roleRequiresMassiveModel(role string) bool {
 	configMutex.RUnlock()
 	if len(roles) == 0 {
 		return role == "architect" || role == "mayor" || role == "planner" || role == "polecat"
+	}
+	for _, r := range roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+// rolePrependsBeforeOriginal reports whether a role's rolePrepend models are
+// tried before its originalModel (only when --allow-paid). Configurable via
+// models.yaml rolePrependBeforeOriginal; defaults to architect/planner/qa so
+// polecat keeps its tuned model (e.g. deepseek-v4-flash) first.
+func rolePrependsBeforeOriginal(role string) bool {
+	configMutex.RLock()
+	roles := globalModelsConfig.RolePrependBeforeOriginal
+	configMutex.RUnlock()
+	if len(roles) == 0 {
+		return role == "architect" || role == "planner" || role == "qa"
 	}
 	for _, r := range roles {
 		if r == role {
@@ -1168,26 +1189,20 @@ func isComplex(body map[string]interface{}) bool {
 	return false
 }
 
+// isMassiveModel reports whether a model id matches any massiveModelPatterns
+// substring from models.yaml. There is no hardcoded list in code — the patterns
+// are entirely config-driven so new flagship models can be added per town.
 func isMassiveModel(modelName string) bool {
 	lower := strings.ToLower(modelName)
-	return strings.Contains(lower, "671b") ||
-		strings.Contains(lower, "550b") ||
-		strings.Contains(lower, "397b") ||
-		strings.Contains(lower, "235b") ||
-		strings.Contains(lower, "1t") ||
-		strings.Contains(lower, "120b") ||
-		strings.Contains(lower, "large") ||
-		strings.Contains(lower, "480b") ||
-		strings.Contains(lower, "405b") ||
-		strings.Contains(lower, "90b") ||
-		strings.Contains(lower, "80b") ||
-		strings.Contains(lower, "70b") ||
-		strings.Contains(lower, "30b") ||
-		strings.Contains(lower, "sonnet") ||
-		strings.Contains(lower, "gpt-4") ||
-		strings.Contains(lower, "gemini") ||
-		strings.Contains(lower, "opus") ||
-		strings.Contains(lower, "deepseek-v4")
+	configMutex.RLock()
+	patterns := globalModelsConfig.MassiveModelPatterns
+	configMutex.RUnlock()
+	for _, p := range patterns {
+		if strings.Contains(lower, strings.ToLower(p)) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -3423,6 +3438,22 @@ func selectCandidates(ctx candidateContext) []string {
 	// Tier 0.06: Groq priority tier (immediately after Cerebras).
 	candidates = appendGroqPriorityCandidates(candidates, ctx)
 
+	// Tier 0.4: Role-based prepends (models.yaml rolePrepend) — tried FIRST for the
+	// role (before the originalModel) so architect/planner/qa get the configured
+	// powerful paid models when --allow-paid is set, instead of always falling
+	// back to their cheap originalModel (e.g. deepseek-v4-flash). Roles not in
+	// rolePrependBeforeOriginal (e.g. polecat) keep their originalModel first.
+	if ctx.allowPaid && ctx.role != "" && rolePrependsBeforeOriginal(ctx.role) {
+		for _, mid := range ctx.conf.RolePrepend[ctx.role] {
+			if mid == "" || ctx.isCooldown(mid) || ctx.isExcluded(mid) {
+				continue
+			}
+			if !candidateListContains(candidates, mid) {
+				candidates = append(candidates, mid)
+			}
+		}
+	}
+
 	// Gas Town roles: try requested NVIDIA/meta/Gemini/Cerebras/DeepSeek model (after Cerebras priority tier).
 	if ctx.role != "" && ctx.originalModel != "" {
 		if ctx.isCooldown(ctx.originalModel) {
@@ -3512,13 +3543,17 @@ func selectCandidates(ctx candidateContext) []string {
 		}
 	}
 
-	// Tier 0.5: Role-based prepends (models.yaml rolePrepend)
-	if ctx.allowPaid && ctx.role != "" {
+	// Tier 0.5: Role-based prepends as fallback (after originalModel) for roles
+	// that keep their originalModel first (e.g. polecat), preserving their tuned
+	// model as the primary candidate while still allowing paid fallbacks.
+	if ctx.allowPaid && ctx.role != "" && !rolePrependsBeforeOriginal(ctx.role) {
 		for _, mid := range ctx.conf.RolePrepend[ctx.role] {
 			if mid == "" || ctx.isCooldown(mid) || ctx.isExcluded(mid) {
 				continue
 			}
-			candidates = append(candidates, mid)
+			if !candidateListContains(candidates, mid) {
+				candidates = append(candidates, mid)
+			}
 		}
 	}
 
@@ -3816,11 +3851,15 @@ func selectCandidates(ctx candidateContext) []string {
 
 	// Final role-based filtering (models.yaml massiveOnlyRoles)
 	// Always keep the user's explicitly requested model regardless of size heuristic,
-	// preserving its original position in the candidate list.
+	// preserving its original position in the candidate list. Explicit rolePrepend
+	// entries (models.yaml rolePrepend) also survive the filter — they are curated
+	// per role (e.g. openai/gpt-5.6-luna for architect) even if the size heuristic
+	// doesn't classify them as "massive".
 	if roleRequiresMassiveModel(ctx.role) {
+		prepends := ctx.conf.RolePrepend[ctx.role]
 		var massiveCandidates []string
 		for _, c := range candidates {
-			if isMassiveModel(c) || isLocalOpenAIModelID(c) || (ctx.originalModel != "" && c == ctx.originalModel) {
+			if isMassiveModel(c) || isLocalOpenAIModelID(c) || (ctx.originalModel != "" && c == ctx.originalModel) || candidateListContains(prepends, c) {
 				massiveCandidates = append(massiveCandidates, c)
 			}
 		}

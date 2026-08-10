@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+// testMassivePatterns mirrors the models.yaml massiveModelPatterns list used in
+// production. Massive classification is fully config-driven (no hardcoded list
+// in code), so tests must provide their own patterns.
+var testMassivePatterns = []string{
+	"671b", "550b", "397b", "235b", "1t", "120b", "large", "480b",
+	"405b", "90b", "80b", "70b", "30b", "sonnet", "gpt-4", "gpt-5.6",
+	"gemini", "opus", "deepseek-v4",
+}
+
 func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 	const (
 		budgetSmall  = "cerebras/budget-small"
@@ -13,6 +22,12 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 		nvidiaBig    = "test/nvidia-big-70b"
 		cbPreviewNew = "cerebras/preview-new"
 	)
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
 	conf := modelsConfig{
 		CerebrasBudget: []string{
 			budgetSmall,
@@ -24,7 +39,11 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 		NvidiaReliable: []string{
 			nvidiaBig,
 		},
+		MassiveModelPatterns: testMassivePatterns,
 	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
 
 	cerebrasModels := []cerebrasModel{
 		{ID: "budget-small"},
@@ -135,12 +154,22 @@ func TestSelectCandidates_RoleMassiveRequirement(t *testing.T) {
 		smallFree = "test/small-free"
 		big70Free = "test/big-70b-free"
 	)
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
 	conf := modelsConfig{
 		ReliableFree: []string{
 			smallFree,
 			big70Free,
 		},
+		MassiveModelPatterns: testMassivePatterns,
 	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
 
 	tests := []struct {
 		name          string
@@ -317,6 +346,7 @@ func TestSelectCandidates_LocalGPUBlocksSmallCloud(t *testing.T) {
 			Models:   []string{cbSmall},
 			Patterns: []string{"nano"},
 		},
+		MassiveModelPatterns: testMassivePatterns,
 	}
 	configMutex.Lock()
 	globalModelsConfig = conf
@@ -373,6 +403,7 @@ func TestSelectCandidates_PlannerKeepsLocalOpenAI(t *testing.T) {
 		LocalOpenAI: []localOpenAIModel{
 			{ID: localGPU, Endpoint: "http://127.0.0.1:8080", Model: "upstream-name"},
 		},
+		MassiveModelPatterns: testMassivePatterns,
 	}
 	configMutex.Lock()
 	globalModelsConfig = conf
@@ -431,7 +462,8 @@ func TestSelectCandidates_CerebrasBeforeNvidiaForPolecat(t *testing.T) {
 			Models:   []string{"cerebras/llama3.1-8b"},
 			Patterns: []string{"nano", "mini"},
 		},
-		MassiveOnlyRoles: []string{"polecat"},
+		MassiveOnlyRoles:    []string{"polecat"},
+		MassiveModelPatterns: testMassivePatterns,
 	}
 	configMutex.Lock()
 	globalModelsConfig = conf
@@ -498,7 +530,8 @@ func TestSelectCandidates_PolecatCapableCloudBeforeLocal(t *testing.T) {
 		RolePrepend: map[string][]string{
 			"polecat": {paidClaude},
 		},
-		MassiveOnlyRoles: []string{"polecat"},
+		MassiveOnlyRoles:    []string{"polecat"},
+		MassiveModelPatterns: testMassivePatterns,
 	}
 	configMutex.Lock()
 	globalModelsConfig = conf
@@ -530,6 +563,156 @@ func TestSelectCandidates_PolecatCapableCloudBeforeLocal(t *testing.T) {
 	}
 	if indexOfCandidate(candidates, meta70) < 0 {
 		t.Fatalf("expected meta/70b-class cloud in list, got %v", candidates)
+	}
+}
+
+func TestSelectCandidates_RolePrependBeforeOriginal(t *testing.T) {
+	const (
+		deepseek = "deepseek/deepseek-v4-flash"
+		cb120    = "cerebras/gpt-oss-120b"
+		gptLuna  = "openai/gpt-5.6-luna"
+	)
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	tests := []struct {
+		name           string
+		role           string
+		originalModel  string
+		beforeOriginal []string
+		prepend        []string
+		allowPaid      bool
+		expectedFirst  string
+		expectPrepend  bool
+	}{
+		{
+			name:           "Architect prepends before originalModel with allowPaid",
+			role:           "architect",
+			originalModel:  deepseek,
+			beforeOriginal: []string{"architect", "planner", "qa"},
+			prepend:        []string{cb120, deepseek},
+			allowPaid:      true,
+			expectedFirst:  cb120,
+			expectPrepend:  true,
+		},
+		{
+			name:           "Polecat keeps originalModel first when not in list",
+			role:           "polecat",
+			originalModel:  deepseek,
+			beforeOriginal: []string{"architect", "planner", "qa"},
+			prepend:        []string{cb120},
+			allowPaid:      true,
+			expectedFirst:  deepseek,
+			expectPrepend:  true,
+		},
+		{
+			name:           "Architect prepends skipped without allowPaid",
+			role:           "architect",
+			originalModel:  cb120,
+			beforeOriginal: []string{"architect", "planner", "qa"},
+			prepend:        []string{gptLuna},
+			allowPaid:      false,
+			expectPrepend:  false,
+		},
+		{
+			name:           "QA prepends before originalModel when listed",
+			role:           "qa",
+			beforeOriginal: []string{"architect", "planner", "qa"},
+			prepend:        []string{gptLuna},
+			allowPaid:      true,
+			expectedFirst:  gptLuna,
+			expectPrepend:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := modelsConfig{
+				RolePrepend:               map[string][]string{tt.role: tt.prepend},
+				RolePrependBeforeOriginal: tt.beforeOriginal,
+				MassiveModelPatterns:      testMassivePatterns,
+			}
+			configMutex.Lock()
+			globalModelsConfig = conf
+			configMutex.Unlock()
+
+			ctx := candidateContext{
+				role:             tt.role,
+				originalModel:    tt.originalModel,
+				conf:             conf,
+				isComplexRequest: true,
+				allowPaid:        tt.allowPaid,
+				isCooldown:       func(m string) bool { return false },
+				isExcluded:       func(m string) bool { return false },
+			}
+
+			candidates := selectCandidates(ctx)
+			if len(candidates) == 0 {
+				t.Fatalf("expected candidates, got none")
+			}
+			for _, p := range tt.prepend {
+				if indexOfCandidate(candidates, p) >= 0 != tt.expectPrepend {
+					t.Errorf("prepend %s present=%v, want %v. Candidates: %v", p, indexOfCandidate(candidates, p) >= 0, tt.expectPrepend, candidates)
+				}
+			}
+			if tt.expectedFirst != "" && candidates[0] != tt.expectedFirst {
+				t.Errorf("expected first candidate %s, got %s", tt.expectedFirst, candidates[0])
+			}
+			di := indexOfCandidate(candidates, tt.originalModel)
+			for _, p := range tt.prepend {
+				pi := indexOfCandidate(candidates, p)
+				if pi < 0 || di < 0 {
+					continue
+				}
+				if tt.expectPrepend && tt.expectedFirst == p && tt.role != "polecat" && pi > di {
+					t.Errorf("prepend %s should come before originalModel for %s, order=%v", p, tt.role, candidates)
+				}
+				if tt.role == "polecat" && pi < di && p != tt.originalModel {
+					t.Errorf("polecat prepend %s should come after originalModel, order=%v", p, candidates)
+				}
+			}
+		})
+	}
+}
+
+func TestRolePrependsBeforeOriginal_DefaultAndConfig(t *testing.T) {
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+
+	configMutex.Lock()
+	globalModelsConfig = modelsConfig{}
+	configMutex.Unlock()
+
+	if !rolePrependsBeforeOriginal("architect") {
+		t.Error("default: architect should prepend before originalModel")
+	}
+	if !rolePrependsBeforeOriginal("planner") {
+		t.Error("default: planner should prepend before originalModel")
+	}
+	if !rolePrependsBeforeOriginal("qa") {
+		t.Error("default: qa should prepend before originalModel")
+	}
+	if rolePrependsBeforeOriginal("polecat") {
+		t.Error("default: polecat should keep originalModel first")
+	}
+
+	configMutex.Lock()
+	globalModelsConfig = modelsConfig{RolePrependBeforeOriginal: []string{"polecat"}}
+	configMutex.Unlock()
+
+	if !rolePrependsBeforeOriginal("polecat") {
+		t.Error("config override: polecat should prepend before originalModel")
+	}
+	if rolePrependsBeforeOriginal("architect") {
+		t.Error("config override: architect should not prepend when list excludes it")
 	}
 }
 
