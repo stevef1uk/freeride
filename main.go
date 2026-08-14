@@ -209,7 +209,10 @@ func localContextSlots(configured int) int {
 	return 16384
 }
 
-// estimatePromptTokens is a coarse upper bound (chars/4) for context budgeting.
+// estimatePromptTokens is a conservative upper bound for context budgeting.
+// Qwen3-Coder tokenizes code-dense prompts at ~0.9-1.1 chars/token (observed
+// 26,969 tokens from a 29,572-char prompt), so we budget 1 char/token — a safe
+// bound that never underestimates.
 func estimatePromptTokens(body map[string]interface{}) int {
 	msgs, ok := body["messages"].([]interface{})
 	if !ok {
@@ -234,25 +237,23 @@ func estimatePromptTokens(body map[string]interface{}) int {
 			}
 		}
 	}
-	tokens := chars / 4
-	if tokens < 1 && chars > 0 {
-		tokens = 1
+	if chars == 0 {
+		return 0
 	}
-	// Code-heavy prompts (SPEC.md, architecture.md, code-index) tokenize far more
-	// densely than chars/4 (~2-3 chars/token). Multiply by 1.5 so the reservation
-	// doesn't exceed llama-server's context and 500 with "Context size exceeded".
-	tokens = (tokens * 3) / 2
-	return tokens
+	return chars
 }
 
 // capLocalRequestContext lowers max_tokens so prompt + generation fits llama-server -c.
-func capLocalRequestContext(body map[string]interface{}, contextSlots int) {
+// Returns false when the prompt alone (at the conservative 1 char/token bound) already
+// exceeds the context, so the caller should skip local and use a cloud model instead.
+func capLocalRequestContext(body map[string]interface{}, contextSlots int) bool {
 	ctx := localContextSlots(contextSlots)
 	promptEst := estimatePromptTokens(body)
 	const slack = 384
 	room := ctx - promptEst - slack
 	if room < 256 {
-		room = 256
+		log.Printf("[LOCAL] skip local: prompt est ~%d exceeds ctx=%d (no room for max_tokens)", promptEst, ctx)
+		return false
 	}
 	// Polecat replies are usually short CMD/EDIT blocks; avoid reserving 4096 on tight ctx.
 	if room > 1024 {
@@ -270,6 +271,7 @@ func capLocalRequestContext(body map[string]interface{}, contextSlots int) {
 		log.Printf("[LOCAL] cap max_tokens %.0f → %.0f (est prompt ~%d, ctx=%d)", requested, capped, promptEst, ctx)
 	}
 	body["max_tokens"] = capped
+	return true
 }
 
 func localGPUBlockPatternMatches(lowerModel, pattern string) bool {
@@ -1491,7 +1493,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			sanitizeBody(currentBody)
 			if localOpenAI != nil {
-				capLocalRequestContext(currentBody, localOpenAI.ContextSlots)
+				if !capLocalRequestContext(currentBody, localOpenAI.ContextSlots) {
+					continue // prompt too big for local context — fall through to next candidate
+				}
 				if localOpenAI.PromptSuffix != "" {
 					if msgs, ok := currentBody["messages"].([]interface{}); ok && len(msgs) > 0 {
 						if last, ok := msgs[len(msgs)-1].(map[string]interface{}); ok {
