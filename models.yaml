@@ -219,10 +219,16 @@ ideModels:
 # Two names (not interchangeable):
 #   id    — LLM_MODEL in ~/gt/settings/config.json (Freeride route name)
 #   model — JSON "model" sent to llama-server (from: curl -s :8090/v1/models | jq -r '.data[0].id')
+#
+# roleLocalExclude: roles that must NEVER use the local model. QA must use a
+# different model than Polecat so it can catch Polecat's mistakes.
+roleLocalExclude:
+  - qa
+
 localOpenAI:
   - id: "local/qwen3-coder-30b"
     endpoint: "http://127.0.0.1:8090"
-    model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+    model: "byteshape/Qwen3-Coder-30B-A3B-Instruct-GGUF"
     contextSlots: 32768  # must match llama-server -c; used to cap max_tokens in Freeride
     cooldown: "2m"
     promptSuffix: "/no_think"  # appended to last user msg; disables reasoning on this model

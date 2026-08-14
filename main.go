@@ -90,6 +90,7 @@ type modelsConfig struct {
 	RolePrependBeforeOriginal   []string                          `yaml:"rolePrependBeforeOriginal"`
 	RoleLocalFirst              map[string][]string               `yaml:"roleLocalFirst"`
 	RoleLocalOnly               []string                          `yaml:"roleLocalOnly"`
+	RoleLocalExclude            []string                          `yaml:"roleLocalExclude"`
 	MassiveOnlyRoles            []string                          `yaml:"massiveOnlyRoles"`
 	MassiveModelPatterns        []string                          `yaml:"massiveModelPatterns"`
 	FreeModelScoreBoost         []scoreBoost                      `yaml:"freeModelScoreBoost"`
@@ -119,9 +120,9 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d role local-first, %d local-GPU block ids, %d local-GPU block patterns from config",
+	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d role local-first, %d local-excluded roles, %d local-GPU block ids, %d local-GPU block patterns from config",
 		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.GeminiModels), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
-		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
+		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.RoleLocalExclude), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
 	if len(globalModelsConfig.GeminiModels) > 0 {
 		if resolveGeminiAPIKey() == "" {
 			log.Printf("[WARN] geminiModels configured but GEMINI_API_KEY (or GOOGLE_API_KEY) is unset — Gemini direct routes will be skipped")
@@ -3364,10 +3365,27 @@ func appendCerebrasPriorityCandidates(candidates []string, ctx candidateContext)
 	return candidates
 }
 
+// roleExcludedFromLocal reports whether a role is configured to never use
+// localOpenAI candidates (e.g. QA must use a different model than Polecat).
+func roleExcludedFromLocal(role string) bool {
+	configMutex.RLock()
+	roles := globalModelsConfig.RoleLocalExclude
+	configMutex.RUnlock()
+	for _, r := range roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
 // appendLocalOpenAICandidates adds local llama-server ids after capable cloud tiers.
 // Local replaces the small/weak-cloud slot; Tier 7 may append again as last-resort fallback (deduped).
 func appendLocalOpenAICandidates(candidates []string, ctx candidateContext) []string {
 	if !ctx.allowLocalOpenAI {
+		return candidates
+	}
+	if roleExcludedFromLocal(ctx.role) {
 		return candidates
 	}
 	for _, m := range ctx.conf.LocalOpenAI {

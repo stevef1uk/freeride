@@ -724,3 +724,70 @@ func indexOfCandidate(slice []string, s string) int {
 	}
 	return -1
 }
+
+func TestAppendLocalOpenAICandidates_ExcludesQARole(t *testing.T) {
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+	conf := modelsConfig{
+		LocalOpenAI: []localOpenAIModel{{
+			ID:       "local/qwen3-coder-30b",
+			Endpoint: "http://127.0.0.1:8090",
+			Model:    "m",
+		}},
+		RoleLocalExclude: []string{"qa"},
+	}
+	configMutex.Lock()
+	globalModelsConfig = conf
+	configMutex.Unlock()
+
+	mkCtx := func(role string) candidateContext {
+		return candidateContext{
+			role:             role,
+			conf:             conf,
+			allowLocalOpenAI: true,
+			isCooldown:       func(string) bool { return false },
+			isExcluded:       func(string) bool { return false },
+		}
+	}
+
+	base := []string{"nvidia/test-70b"}
+	qaCands := appendLocalOpenAICandidates(base, mkCtx("qa"))
+	for _, c := range qaCands {
+		if c == "local/qwen3-coder-30b" {
+			t.Fatalf("QA candidates must not include local model, got %v", qaCands)
+		}
+	}
+
+	polecatCands := appendLocalOpenAICandidates(base, mkCtx("polecat"))
+	found := false
+	for _, c := range polecatCands {
+		if c == "local/qwen3-coder-30b" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("polecat candidates should include local model, got %v", polecatCands)
+	}
+}
+
+func TestRoleExcludedFromLocal_DefaultsEmpty(t *testing.T) {
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+	configMutex.Lock()
+	globalModelsConfig = modelsConfig{}
+	configMutex.Unlock()
+	if roleExcludedFromLocal("qa") {
+		t.Fatal("expected qa not excluded when roleLocalExclude unset")
+	}
+	if roleExcludedFromLocal("polecat") {
+		t.Fatal("expected polecat not excluded when roleLocalExclude unset")
+	}
+}
