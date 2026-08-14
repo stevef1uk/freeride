@@ -238,6 +238,10 @@ func estimatePromptTokens(body map[string]interface{}) int {
 	if tokens < 1 && chars > 0 {
 		tokens = 1
 	}
+	// Code-heavy prompts (SPEC.md, architecture.md, code-index) tokenize far more
+	// densely than chars/4 (~2-3 chars/token). Multiply by 1.5 so the reservation
+	// doesn't exceed llama-server's context and 500 with "Context size exceeded".
+	tokens = (tokens * 3) / 2
 	return tokens
 }
 
@@ -251,8 +255,8 @@ func capLocalRequestContext(body map[string]interface{}, contextSlots int) {
 		room = 256
 	}
 	// Polecat replies are usually short CMD/EDIT blocks; avoid reserving 4096 on tight ctx.
-	if room > 3072 {
-		room = 3072
+	if room > 1024 {
+		room = 1024
 	}
 	var requested float64 = 4096
 	if mt, ok := body["max_tokens"].(float64); ok {
