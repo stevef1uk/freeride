@@ -627,6 +627,16 @@ func TestSelectCandidates_RolePrependBeforeOriginal(t *testing.T) {
 			expectedFirst:  gptLuna,
 			expectPrepend:  true,
 		},
+		{
+			name:           "Polecat with luna prepend goes strictly first when listed",
+			role:           "polecat",
+			originalModel:  deepseek,
+			beforeOriginal: []string{"architect", "planner", "qa", "polecat"},
+			prepend:        []string{gptLuna, cb120, deepseek},
+			allowPaid:      true,
+			expectedFirst:  gptLuna,
+			expectPrepend:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -672,7 +682,16 @@ func TestSelectCandidates_RolePrependBeforeOriginal(t *testing.T) {
 					t.Errorf("prepend %s should come before originalModel for %s, order=%v", p, tt.role, candidates)
 				}
 				if tt.role == "polecat" && pi < di && p != tt.originalModel {
-					t.Errorf("polecat prepend %s should come after originalModel, order=%v", p, candidates)
+					inList := false
+					for _, b := range tt.beforeOriginal {
+						if b == "polecat" {
+							inList = true
+							break
+						}
+					}
+					if !inList {
+						t.Errorf("polecat prepend %s should come after originalModel, order=%v", p, candidates)
+					}
 				}
 			}
 		})

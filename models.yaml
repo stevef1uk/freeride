@@ -36,6 +36,7 @@ rolePrependBeforeOriginal:
   - architect
   - planner
   - qa
+  - polecat
 
 rolePrepend:
   polecat:

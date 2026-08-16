@@ -3343,6 +3343,15 @@ func appendCerebrasPriorityCandidates(candidates []string, ctx candidateContext)
 			add(cid)
 		}
 	}
+	// With --allow-paid, polecat is routed strictly through its rolePrepend
+	// models (gpt-5.6-luna first), so skip Cerebras priority candidates for it
+	// and let luna be tried first. Without --allow-paid, keep current behavior:
+	// polecat still uses the free Cerebras budget models on complex requests.
+	// Only applies when polecat's prepends are actually tried before its
+	// originalModel (rolePrependBeforeOriginal) and it has prepends to use.
+	if ctx.role == "polecat" && ctx.allowPaid && rolePrependsBeforeOriginal("polecat") && len(ctx.conf.RolePrepend["polecat"]) > 0 {
+		return candidates
+	}
 	for _, cid := range ctx.conf.CerebrasBudget {
 		if isMassiveModel(cid) && ctx.isComplexRequest {
 			add(cid)

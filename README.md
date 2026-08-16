@@ -831,7 +831,6 @@ groqBudget:
   - "groq/llama-3.1-8b-instant"
 
 groqPerformance:
-  - "groq/llama-3.3-70b-versatile"
   - "groq/qwen3-32b"
 
 # Priority 1: Specifically requested reliable free models (OpenRouter)

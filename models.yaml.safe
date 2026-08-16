@@ -5,17 +5,58 @@ massiveOnlyRoles:
   - planner
   - polecat
 
+# Extra substring patterns that classify a model as "massive" — fully config-driven,
+# no hardcoded list in Go. Lets massiveOnlyRoles routes use curated flagships
+# like openai/gpt-5.6-luna without code changes.
+massiveModelPatterns:
+  - "671b"
+  - "550b"
+  - "397b"
+  - "235b"
+  - "1t"
+  - "120b"
+  - "large"
+  - "480b"
+  - "405b"
+  - "90b"
+  - "80b"
+  - "70b"
+  - "30b"
+  - "sonnet"
+  - "gpt-4"
+  - "gpt-5.6"
+  - "gemini"
+  - "opus"
+  - "deepseek-v4"
+
 # Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
+# Roles in rolePrependBeforeOriginal try these BEFORE their originalModel; other
+# roles (e.g. polecat) keep their originalModel first and use prepends as fallback.
+rolePrependBeforeOriginal:
+  - architect
+  - planner
+  - qa
+
 rolePrepend:
   polecat:
-    - "anthropic/claude-3.5-sonnet"
+    - "openai/gpt-5.6-luna"
+    - "cerebras/gpt-oss-120b"
+    - "deepseek/deepseek-v4-flash"
   planner:
-    - "anthropic/claude-3.5-sonnet"
+    - "openai/gpt-5.6-luna"
+    - "deepseek/deepseek-v4-flash"
   architect:
-    - "anthropic/claude-3.5-sonnet"
+    - "openai/gpt-5.6-luna"
+    - "cerebras/gpt-oss-120b"
+  qa:
+    - "openai/gpt-5.6-luna"
+    - "google/gemini-3.5-flash"
+    - "google/gemini-2.5-flash-lite"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
+  - pattern: "qwen3-coder"
+    boost: 10.0
   - pattern: "gemini-3.5-flash"
     boost: 8.0
   - pattern: "gemini-2.5-flash-lite"
@@ -60,6 +101,8 @@ geminiModels:
   - id: "google/gemini-2.5-flash-lite"
     model: "gemini-2.5-flash-lite"
 
+# Cerebras: Freeride tries massive budget/performance Cerebras before NVIDIA/meta when size allows.
+# Small entries (8b) are blocked for polecat when local GPU is on (blockSmallCloudWhenLocalGPU).
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
   - "cerebras/llama3.1-8b"                   # $0.10/1M tokens
@@ -71,11 +114,17 @@ cerebrasPerformance:
   - "cerebras/llama3.3-70b"                  # $0.85 (In) / $1.20 (Out) per 1M
   - "cerebras/llama3.1-70b"                  # $0.60/1M tokens
 
+# Priority 0.6: Groq (Used for fast inference when Cerebras fails or is missing)
+groqBudget:
+  - "groq/llama-3.1-8b-instant"
+
+groqPerformance:
+  - "groq/qwen3-32b"
+
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
-  - "nousresearch/hermes-3-llama-3.1-405b:free"
   - "qwen/qwen3-coder:free"
-  - "meta-llama/llama-3.3-70b-instruct:free"
+  - "nousresearch/hermes-3-llama-3.1-405b:free"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
 # 70b/nemotron-super for agents; 11b for lighter tasks.
@@ -83,7 +132,6 @@ nvidiaReliable:
   - "nvidia/llama-3.3-nemotron-super-49b-v1"
   - "nvidia/llama-3.3-nemotron-super-49b-v1.5"
   - "nvidia/nemotron-3-super-120b-a12b"
-  - "meta/llama-3.3-70b-instruct"
   - "meta/llama-3.2-11b-vision-instruct"
 
 # Priority 2.5: Complex-task NVIDIA models (always tried first for complex requests)
@@ -92,14 +140,13 @@ nvidiaComplex:
   - "nvidia/llama-3.3-nemotron-super-49b-v1"
   - "nvidia/llama-3.3-nemotron-super-49b-v1.5"
   - "nvidia/nemotron-3-super-120b-a12b"
-  - "meta/llama-3.3-70b-instruct"
 
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
   - "deepseek/deepseek-v4-flash"             # $0.09 (In) / $0.18 (Out) per 1M — 284B MoE, 1M context
+  - "openai/gpt-5.6-luna"                    # $0.10 (In) / $0.60 (Out) per 1M — fast, 1M context, 128K output
   - "google/gemini-2.0-flash-001"            # $0.10 (In) / $0.40 (Out) per 1M
   - "openai/gpt-4o-mini"                     # $0.15 (In) / $0.60 (Out) per 1M
-  - "anthropic/claude-3.5-sonnet"            # $3.00 (In) / $15.00 (Out) per 1M
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
@@ -107,7 +154,7 @@ excludeModels:
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
   - "nvidia/llama-3.1-nemotron-70b-instruct"   # listed in /v1/models but chat 404
-  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"  # chat 404 for this account
+  - "nvidia/llama-3.1-nemotron-ultra-253b-v1"  # NVIDIA NIM 404; not routed on OpenRouter
   - "meta-llama/llama-3.2-1b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-3b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-1b-instruct"      # TOO SMALL
@@ -118,6 +165,19 @@ excludeModels:
   - "nvidia/llama-3.1-nemotron-nano-vl-8b-v1" # TOO SMALL
   - "nvidia/nemotron-nano-12b-v2-vl"         # TOO SMALL
   - "nvidia/nemotron-mini-4b-instruct"      # TOO SMALL
+  - "nvidia/nemotron-3-nano-30b-a3b"         # REASONING MODEL — produces reasoning_content, no content
+  - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" # REASONING MODEL
+  - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # REASONING MODEL
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"  # ANALYSIS-ONLY — cannot execute CMD/WRITE/EDIT markers
+  - "nvidia/nemotron-3-ultra-550b-a55b"       # ANALYSIS-ONLY
+  - "nvidia/nemotron-3-super-120b-a12b"       # ANALYSIS-ONLY
+  - "nvidia/nemotron-3-super-120b-a12b:free"   # ANALYSIS-ONLY (OpenRouter)
+  - "nvidia/llama-3.3-nemotron-super-49b-v1"   # ANALYSIS-ONLY
+  - "meta/llama-3.3-70b-instruct"              # NIM timeout — cannot handle context
+  - "qwen/qwen3-next-80b-a3b-instruct:free"     # A3B sparsification — erratic on agent tasks
+  - "qwen/qwen3-next-80b-a3b-instruct"          # A3B sparsification — erratic on agent tasks
+  - "allam-2-7b"                                  # TOO SMALL (7B) — produces garbled output on agent tasks
+  - "allam-2-7b:free"                             # TOO SMALL (7B)
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
 # capable cloud is tried first; local llama-server is fallback only (end of candidate list).
@@ -157,12 +217,20 @@ ideModels:
 #
 # Two names (not interchangeable):
 #   id    — LLM_MODEL in ~/gt/settings/config.json (Freeride route name)
-#   model — JSON "model" sent to llama-server (from: curl -s :8080/v1/models | jq -r '.data[0].id')
+#   model — JSON "model" sent to llama-server (from: curl -s :8090/v1/models | jq -r '.data[0].id')
+#
+# roleLocalExclude: roles that must NEVER use the local model. QA must use a
+# different model than Polecat so it can catch Polecat's mistakes.
+roleLocalExclude:
+  - qa
+
 localOpenAI:
   - id: "local/qwen3-coder-30b"
-    endpoint: "http://127.0.0.1:8080"
-    model: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
-    cooldown: "30m"
+    endpoint: "http://127.0.0.1:8090"
+    model: "byteshape/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+    contextSlots: 32768  # must match llama-server -c; used to cap max_tokens in Freeride
+    cooldown: "2m"
+    promptSuffix: "/no_think"  # appended to last user msg; disables reasoning on this model
 
 # Notes:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)
