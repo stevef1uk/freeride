@@ -72,6 +72,21 @@ type blockSmallCloudWhenLocalGPUConfig struct {
 	Patterns []string `yaml:"patterns"`
 }
 
+// modelClassificationConfig holds the model-name heuristics that were previously
+// hardcoded in Go. All lists are substrings matched against lowercase model ids,
+// so new/changed model names can be configured without a code change. Empty lists
+// simply match nothing.
+type modelClassificationConfig struct {
+	NvidiaChatPrefixes []string `yaml:"nvidiaChatPrefixes"`
+	NvidiaChatExcluded []string `yaml:"nvidiaChatExcluded"`
+	NvidiaChatMarkers  []string `yaml:"nvidiaChatMarkers"`
+	ToolSupportMarkers []string `yaml:"toolSupportMarkers"`
+	ComplexModelHints  []string `yaml:"complexModelHints"`
+	OpenRouterExcluded []string `yaml:"openRouterExcluded"`
+	CerebrasBudgetMarkers []string `yaml:"cerebrasBudgetMarkers"`
+	WeakModelMarkers      []string `yaml:"weakModelMarkers"`
+}
+
 type modelsConfig struct {
 	CerebrasBudget              []string                          `yaml:"cerebrasBudget"`
 	CerebrasPerformance         []string                          `yaml:"cerebrasPerformance"`
@@ -98,6 +113,7 @@ type modelsConfig struct {
 	CompatModels                []compatModel                     `yaml:"compatModels"`
 	DefaultResponseModel        string                            `yaml:"defaultResponseModel"`
 	AnthropicResponseModel      string                            `yaml:"anthropicResponseModel"`
+	ModelClassification         modelClassificationConfig         `yaml:"modelClassification"`
 }
 
 var (
@@ -120,9 +136,10 @@ func loadModelsConfig() {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
-	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d role local-first, %d local-excluded roles, %d local-GPU block ids, %d local-GPU block patterns from config",
+	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d role local-first, %d local-excluded roles, %d local-GPU block ids, %d local-GPU block patterns, %d chat prefixes, %d tool-support markers, %d complex hints from config",
 		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.GeminiModels), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
-		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.RoleLocalExclude), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns))
+		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.RoleLocalExclude), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns),
+		len(globalModelsConfig.ModelClassification.NvidiaChatPrefixes), len(globalModelsConfig.ModelClassification.ToolSupportMarkers), len(globalModelsConfig.ModelClassification.ComplexModelHints))
 	if len(globalModelsConfig.GeminiModels) > 0 {
 		if resolveGeminiAPIKey() == "" {
 			log.Printf("[WARN] geminiModels configured but GEMINI_API_KEY (or GOOGLE_API_KEY) is unset — Gemini direct routes will be skipped")
@@ -155,6 +172,80 @@ func configAnthropicResponseModel() string {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
 	return globalModelsConfig.AnthropicResponseModel
+}
+
+func configModelClassification() modelClassificationConfig {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return globalModelsConfig.ModelClassification
+}
+
+func configNvidiaChatPrefixes() []string {
+	return configModelClassification().NvidiaChatPrefixes
+}
+
+func configNvidiaChatExcluded() []string {
+	return configModelClassification().NvidiaChatExcluded
+}
+
+func configNvidiaChatMarkers() []string {
+	return configModelClassification().NvidiaChatMarkers
+}
+
+func configToolSupportMarkers() []string {
+	return configModelClassification().ToolSupportMarkers
+}
+
+func configComplexModelHints() []string {
+	return configModelClassification().ComplexModelHints
+}
+
+func configOpenRouterExcluded() []string {
+	return configModelClassification().OpenRouterExcluded
+}
+
+func configCerebrasBudgetMarkers() []string {
+	return configModelClassification().CerebrasBudgetMarkers
+}
+
+func configWeakModelMarkers() []string {
+	return configModelClassification().WeakModelMarkers
+}
+
+// matchesAnySubstring reports whether lower contains any of the given substrings.
+func matchesAnySubstring(lower string, subs []string) bool {
+	for _, s := range subs {
+		if s != "" && strings.Contains(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesMarker reports whether lower satisfies a single config marker. A marker
+// may be a plain substring or a "+"-joined list of substrings that must ALL be
+// present (e.g. "llama-3.2+70b" means both "llama-3.2" and "70b" must match).
+func matchesMarker(lower string, marker string) bool {
+	if marker == "" {
+		return false
+	}
+	parts := strings.Split(marker, "+")
+	for _, p := range parts {
+		if !strings.Contains(lower, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesAnyMarker reports whether lower satisfies any marker in the config list.
+func matchesAnyMarker(lower string, markers []string) bool {
+	for _, m := range markers {
+		if matchesMarker(lower, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func roleRequiresMassiveModel(role string) bool {
@@ -569,7 +660,7 @@ func fetchFreeModels() ([]openRouterModel, error) {
 		isModelFree := m.Pricing.Prompt == "0" || m.Pricing.Prompt == "0.0" || m.Pricing.Prompt == "0.00"
 		if isModelFree || allowPaid {
 			lowerID := strings.ToLower(m.ID)
-			if strings.Contains(lowerID, "lyria") || strings.Contains(lowerID, "liquid") {
+			if matchesAnySubstring(lowerID, configOpenRouterExcluded()) {
 				continue
 			}
 			if isModelFree && debugMode {
@@ -639,39 +730,27 @@ func fetchNvidiaFreeModels() ([]nvidiaModel, error) {
 		}
 		lowerID := strings.ToLower(m.ID)
 
-		// Broaden prefix check to include partners hosted on NVIDIA NIM
-		validPrefix := strings.HasPrefix(m.ID, "nvidia/") ||
-			strings.HasPrefix(m.ID, "meta/") ||
-			strings.HasPrefix(m.ID, "google/") ||
-			strings.HasPrefix(m.ID, "mistralai/") ||
-			strings.HasPrefix(m.ID, "microsoft/") ||
-			strings.HasPrefix(m.ID, "deepseek/")
+		// Chat-capable vendor namespaces hosted on NVIDIA NIM (config-driven).
+		chatPrefixes := configNvidiaChatPrefixes()
+		validPrefix := false
+		for _, p := range chatPrefixes {
+			if strings.HasPrefix(m.ID, p) {
+				validPrefix = true
+				break
+			}
+		}
 
 		// Only include chat/instruct models (not embeddings, translators, vision-only, safety, etc)
 		isChatModel := validPrefix &&
-			!strings.Contains(lowerID, "embed") &&
-			!strings.Contains(lowerID, "safety") &&
-			!strings.Contains(lowerID, "guard") &&
-			!strings.Contains(lowerID, "clip") &&
-			!strings.Contains(lowerID, "vila") &&
-			!strings.Contains(lowerID, "riva") &&
-			!strings.Contains(lowerID, "calibration") &&
-			!strings.Contains(lowerID, "pixel") &&
-			!strings.Contains(lowerID, "neva") &&
-			(strings.Contains(lowerID, "instruct") || strings.Contains(lowerID, "nemotron") || strings.Contains(lowerID, "chat") || strings.Contains(lowerID, "coder"))
+			!matchesAnySubstring(lowerID, configNvidiaChatExcluded()) &&
+			matchesAnySubstring(lowerID, configNvidiaChatMarkers())
 
 		if !isChatModel {
 			continue
 		}
 
-		// Mark models that support tools/function calling
-		// Nemotron and newerLlama models generally support tools
-		m.SupportsTools = strings.Contains(lowerID, "nemotron") ||
-			strings.Contains(lowerID, "llama-3.3") ||
-			(strings.Contains(lowerID, "llama-3.2") && strings.Contains(lowerID, "70b")) ||
-			strings.Contains(lowerID, "deepseek") ||
-			strings.Contains(lowerID, "qwen2.5") ||
-			strings.Contains(lowerID, "qwen3")
+		// Mark models that support tools/function calling (config-driven markers).
+		m.SupportsTools = matchesAnyMarker(lowerID, configToolSupportMarkers())
 
 		freeModels = append(freeModels, m)
 	}
@@ -1188,7 +1267,7 @@ func isComplex(body map[string]interface{}) bool {
 	// 4. User specifically asked for a high-tier model without :free suffix
 	if model, ok := body["model"].(string); ok {
 		lowerModel := strings.ToLower(model)
-		if (strings.Contains(lowerModel, "sonnet") || strings.Contains(lowerModel, "gpt-4o") || strings.Contains(lowerModel, "opus") || strings.Contains(lowerModel, "o1-")) && !strings.Contains(lowerModel, ":free") {
+		if matchesAnySubstring(lowerModel, configComplexModelHints()) && !strings.Contains(lowerModel, ":free") {
 			log.Printf("[DEBUG] Request classified as COMPLEX: High-tier model requested (%s)", model)
 			return true
 		}
@@ -3570,8 +3649,7 @@ func selectCandidates(ctx candidateContext) []string {
 			continue
 		}
 		if !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
-			isBudget := strings.Contains(m.ID, "8b") || strings.Contains(m.ID, "preview") ||
-				strings.Contains(m.ID, "oss") || strings.Contains(m.ID, "qwen-3")
+			isBudget := matchesAnySubstring(strings.ToLower(m.ID), configCerebrasBudgetMarkers())
 			if ctx.isComplexRequest || isBudget {
 				candidates = append(candidates, modelName)
 			}
@@ -3654,14 +3732,7 @@ func selectCandidates(ctx candidateContext) []string {
 				isOriginalFree = true
 			}
 			lowerOrig := strings.ToLower(ctx.originalModel)
-			isOriginalWeak = strings.Contains(lowerOrig, "-1b-") ||
-				strings.Contains(lowerOrig, "-3b-") ||
-				strings.Contains(lowerOrig, "-7b-") ||
-				strings.Contains(lowerOrig, "-8b-") ||
-				strings.Contains(lowerOrig, "-11b-") ||
-				strings.Contains(lowerOrig, "-12b-") ||
-				strings.Contains(lowerOrig, "nano") ||
-				strings.Contains(lowerOrig, "mini")
+			isOriginalWeak = matchesAnySubstring(lowerOrig, configWeakModelMarkers())
 
 			if isOriginalFree && !ctx.isExcluded(ctx.originalModel) {
 				if !ctx.isComplexRequest || !isOriginalWeak {

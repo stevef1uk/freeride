@@ -36,6 +36,7 @@ rolePrependBeforeOriginal:
   - architect
   - planner
   - qa
+  - polecat
 
 rolePrepend:
   polecat:
@@ -63,6 +64,70 @@ freeModelScoreBoost:
     boost: 4.0
   - pattern: "mistral-7b-instruct"
     boost: 1.0
+
+# Model-name classification heuristics (previously hardcoded in Go). All entries
+# are substrings matched against lowercase model ids; markers may be joined with
+# "+" to require ALL substrings (e.g. "llama-3.2+70b"). Empty lists match nothing.
+modelClassification:
+  # Vendor namespaces hosted on NVIDIA NIM that are treated as chat-capable.
+  nvidiaChatPrefixes:
+    - "nvidia/"
+    - "meta/"
+    - "google/"
+    - "mistralai/"
+    - "microsoft/"
+    - "deepseek/"
+  # Substrings that exclude an NVIDIA model from chat use (embeddings, safety, etc).
+  nvidiaChatExcluded:
+    - "embed"
+    - "safety"
+    - "guard"
+    - "clip"
+    - "vila"
+    - "riva"
+    - "calibration"
+    - "pixel"
+    - "neva"
+  # Substrings that qualify an NVIDIA model as chat/instruct capable.
+  nvidiaChatMarkers:
+    - "instruct"
+    - "nemotron"
+    - "chat"
+    - "coder"
+  # Substrings marking models that support tool/function calling.
+  toolSupportMarkers:
+    - "nemotron"
+    - "llama-3.3"
+    - "llama-3.2+70b"
+    - "deepseek"
+    - "qwen2.5"
+    - "qwen3"
+  # Model substrings that classify a request as COMPLEX (unless model has :free).
+  complexModelHints:
+    - "sonnet"
+    - "gpt-4o"
+    - "opus"
+    - "o1-"
+  # OpenRouter models to always skip (non-chat/audio/reasoning edge cases).
+  openRouterExcluded:
+    - "lyria"
+    - "liquid"
+  # Cerebras model-name markers treated as budget (tried even for simple requests).
+  cerebrasBudgetMarkers:
+    - "8b"
+    - "preview"
+    - "oss"
+    - "qwen-3"
+  # Substrings marking a model as small/weak (kept out of complex originalModel routes).
+  weakModelMarkers:
+    - "-1b-"
+    - "-3b-"
+    - "-7b-"
+    - "-8b-"
+    - "-11b-"
+    - "-12b-"
+    - "nano"
+    - "mini"
 
 trustedScoringNames:
   - google

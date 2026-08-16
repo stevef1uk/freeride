@@ -10,7 +10,7 @@ Use it **standalone** with any OpenAI-compatible client, or as the LLM backend f
 
 - **Cloud-first local GPU**: With `--allow-local-openai`, capable cloud models (70B NVIDIA, OpenRouter free tiers, large Cerebras, etc.) are tried first; `localOpenAI` (llama-server on `:8080`) is **last-resort fallback** only when cloud routes fail or are in cooldown.
 - **Weak-cloud blocking**: `blockSmallCloudWhenLocalGPU` in `models.yaml` skips nano/mini/8B cloud models when local GPU mode is on — so fallback does not mean “downgrade to 8B.”
-- **Config-only model IDs**: Routing lists, role prepends, compat model stubs, and score boosts live in `models.yaml` — not hardcoded in Go.
+- **Config-only model IDs**: Routing lists, role prepends, compat model stubs, score boosts, and model-name classification heuristics live in `models.yaml` — not hardcoded in Go.
 - **Request sanitization**: Anthropic `tools` / `system` payloads are normalized before upstream forwarding (`sanitizeBody`).
 - **Faster default tests**: `go test ./...` runs unit and in-process httptest suites (including Gemini direct routing tests); live proxy tests require `FREERIDE_INTEGRATION=1`. The `scratch/` tree is dev-only (`//go:build ignore`) and is not part of the test run.
 
@@ -764,7 +764,7 @@ ps aux | grep opencode | grep -v grep
 
 ## Model Configuration
 
-**All model IDs and routing policy are in `models.yaml`** — edit that file to add/remove models, role overrides, or local GPU settings. Go code only implements tier logic and provider prefixes.
+**All model IDs and routing policy are in `models.yaml`** — edit that file to add/remove models, role overrides, local GPU settings, or model-name classification heuristics. Go code only implements tier logic and provider prefixes.
 
 ### Local llama-server (optional)
 
@@ -852,6 +852,18 @@ curatedPaid:
 # Models to exclude even if they are free
 excludeModels:
   - "google/gemma-4-26b-a4b-it:free" # Currently broken 401
+
+# Model-name classification heuristics (substrings matched on lowercase model ids).
+# Markers joined with "+" require ALL substrings (e.g. "llama-3.2+70b").
+modelClassification:
+  nvidiaChatPrefixes: ["nvidia/", "meta/", "google/", "mistralai/", "microsoft/", "deepseek/"]
+  nvidiaChatExcluded: ["embed", "safety", "guard", "clip", "vila", "riva", "calibration", "pixel", "neva"]
+  nvidiaChatMarkers: ["instruct", "nemotron", "chat", "coder"]
+  toolSupportMarkers: ["nemotron", "llama-3.3", "llama-3.2+70b", "deepseek", "qwen2.5", "qwen3"]
+  complexModelHints: ["sonnet", "gpt-4o", "opus", "o1-"]
+  openRouterExcluded: ["lyria", "liquid"]
+  cerebrasBudgetMarkers: ["8b", "preview", "oss", "qwen-3"]
+  weakModelMarkers: ["-1b-", "-3b-", "-7b-", "-8b-", "-11b-", "-12b-", "nano", "mini"]
 
 blockSmallCloudWhenLocalGPU:
   models: ["cerebras/llama3.1-8b", ...]

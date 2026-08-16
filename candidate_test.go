@@ -40,6 +40,9 @@ func TestSelectCandidates_CerebrasSensibleRouting(t *testing.T) {
 			nvidiaBig,
 		},
 		MassiveModelPatterns: testMassivePatterns,
+		ModelClassification: modelClassificationConfig{
+			CerebrasBudgetMarkers: []string{"8b", "preview", "oss", "qwen-3"},
+		},
 	}
 	configMutex.Lock()
 	globalModelsConfig = conf
@@ -808,5 +811,60 @@ func TestRoleExcludedFromLocal_DefaultsEmpty(t *testing.T) {
 	}
 	if roleExcludedFromLocal("polecat") {
 		t.Fatal("expected polecat not excluded when roleLocalExclude unset")
+	}
+}
+
+func TestModelClassificationMarkers(t *testing.T) {
+	if !matchesAnyMarker("meta/llama-3.2-70b-instruct", []string{"llama-3.2+70b"}) {
+		t.Error("compound marker llama-3.2+70b should match llama-3.2-70b model")
+	}
+	if matchesAnyMarker("meta/llama-3.2-11b-instruct", []string{"llama-3.2+70b"}) {
+		t.Error("compound marker llama-3.2+70b must NOT match llama-3.2-11b")
+	}
+	if !matchesAnyMarker("nvidia/nemotron-3-super", []string{"nemotron"}) {
+		t.Error("simple marker nemotron should match")
+	}
+	if matchesAnyMarker("deepseek/deepseek-v4-flash", []string{}) {
+		t.Error("empty marker list should match nothing")
+	}
+	if matchesAnySubstring("google/gemini-3.5-flash", nil) {
+		t.Error("nil substring list should match nothing")
+	}
+	if !matchesAnySubstring("cerebras/gpt-oss-120b", []string{"oss"}) {
+		t.Error("substring oss should match gpt-oss-120b")
+	}
+}
+
+func TestModelClassificationConfigEmptySafe(t *testing.T) {
+	prevCfg := globalModelsConfig
+	t.Cleanup(func() {
+		configMutex.Lock()
+		globalModelsConfig = prevCfg
+		configMutex.Unlock()
+	})
+	configMutex.Lock()
+	globalModelsConfig = modelsConfig{}
+	configMutex.Unlock()
+
+	if configNvidiaChatPrefixes() != nil {
+		t.Error("empty config should yield nil chat prefixes (match nothing)")
+	}
+	if configToolSupportMarkers() != nil {
+		t.Error("empty config should yield nil tool-support markers")
+	}
+	if configComplexModelHints() != nil {
+		t.Error("empty config should yield nil complex hints")
+	}
+	if configOpenRouterExcluded() != nil {
+		t.Error("empty config should yield nil OpenRouter exclusions")
+	}
+	if configCerebrasBudgetMarkers() != nil {
+		t.Error("empty config should yield nil Cerebras budget markers")
+	}
+	if configWeakModelMarkers() != nil {
+		t.Error("empty config should yield nil weak-model markers")
+	}
+	if matchesAnySubstring("anything", configComplexModelHints()) {
+		t.Error("nil hints should match nothing")
 	}
 }
