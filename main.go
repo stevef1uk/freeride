@@ -63,6 +63,11 @@ type localOpenAIModel struct {
 	Cooldown     string `yaml:"cooldown,omitempty"`
 	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"` // optional: env var for Bearer token; if set and empty, no Authorization header
 	PromptSuffix string `yaml:"promptSuffix,omitempty"` // appended to last user message (e.g. "/no_think")
+	// ExtraBody keys are deep-merged into the outbound JSON whenever a request
+	// routes to this endpoint — config-driven per-engine requirements such as
+	// chat_template_kwargs (e.g. {"enable_thinking": false} for Qwen3 reasoning
+	// models served by engines whose templates ignore /no_think suffixes).
+	ExtraBody map[string]interface{} `yaml:"extraBody,omitempty"`
 }
 
 // blockSmallCloudWhenLocalGPUConfig lists cloud model ids/patterns to skip when localOpenAI
@@ -280,6 +285,28 @@ func rolePrependsBeforeOriginal(role string) bool {
 		}
 	}
 	return false
+}
+
+// mergeExtraBody deep-merges configured extra body keys into the outbound
+// request. Nested maps merge key-by-key so a client-supplied value under the
+// same top-level key (e.g. chat_template_kwargs) isn't clobbered wholesale;
+// scalars and new keys override/append.
+func mergeExtraBody(dst map[string]interface{}, extra map[string]interface{}) {
+	for k, v := range extra {
+		if vm, ok := v.(map[string]interface{}); ok {
+			if dm, ok := dst[k].(map[string]interface{}); ok {
+				mergeExtraBody(dm, vm)
+				continue
+			}
+			cp := make(map[string]interface{}, len(vm))
+			for kk, vv := range vm {
+				cp[kk] = vv
+			}
+			dst[k] = cp
+			continue
+		}
+		dst[k] = v
+	}
 }
 
 func isLocalOpenAIModelID(id string) bool {
@@ -1584,6 +1611,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
+				mergeExtraBody(currentBody, localOpenAI.ExtraBody)
 			}
 			// Per-provider max_tokens cap — applied just before marshaling
 			if mt, ok := currentBody["max_tokens"].(float64); ok {
