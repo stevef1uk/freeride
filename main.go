@@ -57,17 +57,20 @@ type compatModel struct {
 // reached directly, without an API key unless apiKeyEnv is set.
 type localOpenAIModel struct {
 	ID           string `yaml:"id"`
-	Endpoint     string `yaml:"endpoint"` // base URL, e.g. http://127.0.0.1:8090
-	Model        string `yaml:"model"`    // exact JSON "model" llama-server expects (see GET /v1/models)
+	Endpoint     string `yaml:"endpoint"`               // base URL, e.g. http://127.0.0.1:8090
+	Model        string `yaml:"model"`                  // exact JSON "model" llama-server expects (see GET /v1/models)
 	ContextSlots int    `yaml:"contextSlots,omitempty"` // llama-server -c; caps max_tokens so prompt+gen fits
 	Cooldown     string `yaml:"cooldown,omitempty"`
-	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"` // optional: env var for Bearer token; if set and empty, no Authorization header
+	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"`    // optional: env var for Bearer token; if set and empty, no Authorization header
 	PromptSuffix string `yaml:"promptSuffix,omitempty"` // appended to last user message (e.g. "/no_think")
 	// ExtraBody keys are deep-merged into the outbound JSON whenever a request
 	// routes to this endpoint — config-driven per-engine requirements such as
 	// chat_template_kwargs (e.g. {"enable_thinking": false} for Qwen3 reasoning
 	// models served by engines whose templates ignore /no_think suffixes).
 	ExtraBody map[string]interface{} `yaml:"extraBody,omitempty"`
+	// Priority promotes this endpoint to the FRONT of the candidate chain for
+	// roles that may use it (opt-in). Default false = end-of-chain fallback.
+	Priority bool `yaml:"priority,omitempty"`
 }
 
 // blockSmallCloudWhenLocalGPUConfig lists cloud model ids/patterns to skip when localOpenAI
@@ -82,12 +85,12 @@ type blockSmallCloudWhenLocalGPUConfig struct {
 // so new/changed model names can be configured without a code change. Empty lists
 // simply match nothing.
 type modelClassificationConfig struct {
-	NvidiaChatPrefixes []string `yaml:"nvidiaChatPrefixes"`
-	NvidiaChatExcluded []string `yaml:"nvidiaChatExcluded"`
-	NvidiaChatMarkers  []string `yaml:"nvidiaChatMarkers"`
-	ToolSupportMarkers []string `yaml:"toolSupportMarkers"`
-	ComplexModelHints  []string `yaml:"complexModelHints"`
-	OpenRouterExcluded []string `yaml:"openRouterExcluded"`
+	NvidiaChatPrefixes    []string `yaml:"nvidiaChatPrefixes"`
+	NvidiaChatExcluded    []string `yaml:"nvidiaChatExcluded"`
+	NvidiaChatMarkers     []string `yaml:"nvidiaChatMarkers"`
+	ToolSupportMarkers    []string `yaml:"toolSupportMarkers"`
+	ComplexModelHints     []string `yaml:"complexModelHints"`
+	OpenRouterExcluded    []string `yaml:"openRouterExcluded"`
 	CerebrasBudgetMarkers []string `yaml:"cerebrasBudgetMarkers"`
 	WeakModelMarkers      []string `yaml:"weakModelMarkers"`
 }
@@ -287,6 +290,33 @@ func rolePrependsBeforeOriginal(role string) bool {
 	return false
 }
 
+// selectCandidates promotes localOpenAI entries marked priority:true to the
+// front of the otherwise cloud-first candidate chain. Config-driven opt-in:
+// benchmarked engines can serve as primary while every other entry keeps its
+// fallback order.
+func selectCandidates(ctx candidateContext) []string {
+	candidates := selectCandidatesBase(ctx)
+	prio := map[string]bool{}
+	for _, m := range ctx.conf.LocalOpenAI {
+		if m.Priority && !ctx.isCooldown(m.ID) && !ctx.isExcluded(m.ID) && !roleExcludedFromLocal(ctx.role) {
+			prio[m.ID] = true
+		}
+	}
+	if len(prio) == 0 {
+		return candidates
+	}
+	var front, rest []string
+	for _, c := range candidates {
+		if prio[c] {
+			front = append(front, c)
+			delete(prio, c)
+		} else {
+			rest = append(rest, c)
+		}
+	}
+	return append(front, rest...)
+}
+
 // mergeExtraBody deep-merges configured extra body keys into the outbound
 // request. Nested maps merge key-by-key so a client-supplied value under the
 // same top-level key (e.g. chat_template_kwargs) isn't clobbered wholesale;
@@ -484,7 +514,6 @@ type groqModel struct {
 	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
 }
-
 
 type ollamaModelDetails struct {
 	Format            string   `json:"format"`
@@ -1427,10 +1456,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			return filtered
 		}()
-		if len(cachedFreeModels) > 0 && !isCooldown(cachedFreeModels[0].ID) {
+		// Fallback candidates must honor excludeModels too — otherwise
+		// analysis-only models (e.g. nemotron variants returning empty content)
+		// leak through precisely when the primary pool is exhausted.
+		if len(cachedFreeModels) > 0 && !isCooldown(cachedFreeModels[0].ID) && !isCandidateExcluded(cachedFreeModels[0].ID) {
 			candidates = append(candidates, cachedFreeModels[0].ID)
 			log.Printf("[DEBUG] using OpenRouter fallback: %s", cachedFreeModels[0].ID)
-		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) {
+		} else if len(toolCapableNvidia) > 0 && !isCooldown(toolCapableNvidia[0].ID) && !isCandidateExcluded(toolCapableNvidia[0].ID) {
 			candidates = append(candidates, toolCapableNvidia[0].ID)
 			log.Printf("[DEBUG] using NVIDIA tool-capable fallback: %s", toolCapableNvidia[0].ID)
 		} else if geminiDirectAvailable() {
@@ -3571,7 +3603,7 @@ func appendGroqPriorityCandidates(candidates []string, ctx candidateContext) []s
 	return candidates
 }
 
-func selectCandidates(ctx candidateContext) []string {
+func selectCandidatesBase(ctx candidateContext) []string {
 	var candidates []string
 
 	// Tier 0.05: Cerebras first when model size allows (fast inference).

@@ -39,18 +39,23 @@ rolePrependBeforeOriginal:
   - polecat
 
 rolePrepend:
+  # stealth/ox-alpha first everywhere: free OpenRouter tier — try it before any
+  # paid prepend; on 429/cooldown the chain falls through to the paid entries.
   polecat:
+    - "stealth/ox-alpha"
     - "openai/gpt-5.6-luna"
     - "cerebras/gpt-oss-120b"
     - "deepseek/deepseek-v4-flash"
   planner:
+    - "stealth/ox-alpha"
     - "openai/gpt-5.6-luna"
     - "deepseek/deepseek-v4-flash"
   architect:
+    - "stealth/ox-alpha"
     - "openai/gpt-5.6-luna"
     - "cerebras/gpt-oss-120b"
-    - "stealth/ox-alpha"
   qa:
+    - "stealth/ox-alpha"
     - "openai/gpt-5.6-luna"
     - "google/gemini-3.5-flash"
     - "google/gemini-2.5-flash-lite"
@@ -221,6 +226,27 @@ excludeModels:
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
   - "nvidia/llama-3.1-nemotron-70b-instruct"   # 404 Not Found
+  - "meta/llama-3.2-11b-vision-instruct"   # 11B vision model — unreliable on agent tasks
+  # NVIDIA NIM non-chat / failing models (observed in live stats)
+  - "nvidia/nemotron-4-340b-reward"        # reward model, not a chat model
+  - "nvidia/nemotron-parse"                # parse-only model
+  - "nvidia/nemotron-4-340b-instruct"      # failing on agent tasks
+  - "nvidia/nemotron-nano-3-30b-a3b"       # empty-content responses
+  - "nvidia/nvidia-nemotron-nano-9b-v2"    # ~45% flaky nano
+  - "nvidia/llama-3.1-nemotron-51b-instruct"
+  - "mistralai/mistral-nemotron"           # failing on agent tasks
+  # Ollama cloud-subscription routes — require paid ollama.com account
+  - "ollama/deepseek-v4-flash:0731"
+  - "ollama/deepseek-v4-flash:preview"
+  - "ollama/deepseek-v4-pro:0813"
+  - "ollama/deepseek-v4-pro:preview"
+  - "ollama/gpt-oss:120b"
+  - "ollama/mistral-large-3:675b"
+  - "ollama/qwen3.5:397b"
+  # Groq namespaced variants (exact-match exclusions are per-prefix)
+  - "groq/allam-2-7b"
+  - "groq/whisper-large-v3"                # audio model
+  - "groq/whisper-large-v3-turbo"          # audio model
   - "nvidia/llama-3.1-nemotron-ultra-253b-v1"  # NVIDIA NIM 404; not routed on OpenRouter
   - "meta-llama/llama-3.2-1b-instruct:free" # TOO SMALL - Hallucinates
   - "meta-llama/llama-3.2-3b-instruct:free" # TOO SMALL - Hallucinates
@@ -240,6 +266,7 @@ excludeModels:
   - "nvidia/nemotron-3-super-120b-a12b"       # ANALYSIS-ONLY
   - "nvidia/nemotron-3-super-120b-a12b:free"   # ANALYSIS-ONLY (OpenRouter)
   - "nvidia/llama-3.3-nemotron-super-49b-v1"   # ANALYSIS-ONLY
+  - "nvidia/llama-3.3-nemotron-super-49b-v1.5" # 49B — weak/erratic on agent tasks (empty content, 40% flaky)
   - "meta/llama-3.3-70b-instruct"              # NIM timeout — cannot handle context
   - "qwen/qwen3-next-80b-a3b-instruct:free"     # A3B sparsification — erratic on agent tasks
   - "qwen/qwen3-next-80b-a3b-instruct"          # A3B sparsification — erratic on agent tasks
@@ -293,25 +320,27 @@ roleLocalExclude:
   - qa
 
 localOpenAI:
+  # llama.cpp server (:8090) — CURRENT resident engine (stable across hours of
+  # agent turns; FreeToken hybrid-offload wedges under sustained load, entry
+  # kept below for retesting after upstream fixes).
+  - id: "local/qwen3-coder-30b"
+    endpoint: "http://127.0.0.1:8090"
+    model: "byteshape/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+    contextSlots: 32768  # must match llama-server -c; used to cap max_tokens in Freeride
+    cooldown: "2m"
+    promptSuffix: "/no_think"  # appended to last user msg; disables reasoning on this model
   # FreeToken engine (ft serve on :1919) — Qwen3.6-35B-A3B NVFP4, hybrid MoE
-  # offload tuned for 12GB VRAM. Benchmark: 5/5 gastown format tests.
-  # extraBody disables thinking at the template level (its /no_think is ignored);
-  # without this, reasoning burns the token budget before any content.
-  - id: "local/qwen3.6-35b-nvfp4"
-    endpoint: "http://127.0.0.1:1919"
-    model: "Qwen3.6-35B-A3B-NVFP4"
-    contextSlots: 16384  # must match ft serve --max-seq-len-override
-    extraBody:
-      chat_template_kwargs:
-        enable_thinking: false
-  # llama.cpp server (:8090) — enable when llama-server is running instead of
-  # FreeToken (both models cannot share the GPU).
-  # - id: "local/qwen3-coder-30b"
-  #   endpoint: "http://127.0.0.1:8090"
-  #   model: "byteshape/Qwen3-Coder-30B-A3B-Instruct-GGUF"
-  #   contextSlots: 32768  # must match llama-server -c; used to cap max_tokens in Freeride
-  #   cooldown: "2m"
-  #   promptSuffix: "/no_think"  # appended to last user msg; disables reasoning on this model
+  # offload tuned for 12GB VRAM. Benchmark: 5/5 gastown format tests on a fresh
+  # boot, BUT endurance soak (llm_bench --soak) showed it wedges after a handful
+  # of turns on this box — do not enable until upstream stabilizes.
+  # - id: "local/qwen3.6-35b-nvfp4"
+  #   endpoint: "http://127.0.0.1:1919"
+  #   model: "Qwen3.6-35B-A3B-NVFP4"
+  #   contextSlots: 16384
+  #   priority: true
+  #   extraBody:
+  #     chat_template_kwargs:
+  #       enable_thinking: false
 
 # Notes:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)
