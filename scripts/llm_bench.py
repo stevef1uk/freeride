@@ -188,6 +188,10 @@ if __name__ == "__main__":
     ap.add_argument("--compare", nargs=2, metavar=("A.json", "B.json"))
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--soak", type=int, default=0,
+                    help="after the battery, fire N sequential agent-style turns "
+                         "(varied input sizes incl. multi-K) to expose endurance "
+                         "degradation that single-shot batteries miss")
     args = ap.parse_args()
 
     if args.compare:
@@ -230,8 +234,14 @@ if __name__ == "__main__":
     print(f"Engine '{args.engine}' healthy at {cfg['base']} ({cfg['model']})")
 
     def call_fn(content, max_tokens):
-        return chat(cfg["base"], cfg["model"], cfg["extra_body"],
-                    content + cfg["suffix"], max_tokens, args.timeout)
+        try:
+            return chat(cfg["base"], cfg["model"], cfg["extra_body"],
+                        content + cfg["suffix"], max_tokens, args.timeout)
+        except Exception as e:
+            return {"content": "", "reasoning_len": 0, "completion_tokens": 0,
+                    "finish": "error:" + type(e).__name__,
+                    "latency_s": float(args.timeout),
+                    "error": f"{type(e).__name__}: {e}"[:140]}
 
     globals()["chat_call"] = call_fn
 
@@ -252,6 +262,40 @@ if __name__ == "__main__":
         "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "tests": tests,
     }
+
+    if args.soak > 0:
+        print(f"Soak x{args.soak} (agent-style turns, varied sizes)...")
+        import random
+        random.seed(7)
+        sizes = [150, 600, 1500, 3000]
+        lat, ok = [], 0
+        for i in range(args.soak):
+            n = sizes[i % len(sizes)]
+            filler = ("Requirement detail line for context padding. " * ((n // 7) + 1))[:n * 5]
+            prompt = (filler + "\n\nBased on the context above, reply with exactly one line: "
+                      f"CMD: echo turn-{i}")
+            try:
+                r = call_fn(prompt, 120)
+                good = r["finish"] == "stop" and "CMD:" in r["content"]
+                ok += good
+                lat.append(r["latency_s"])
+                print(f"  turn {i + 1:02d}: {r['latency_s']:>6.1f}s "
+                      f"{'ok' if good else 'BAD-FORMAT'}")
+            except Exception as e:
+                lat.append(args.timeout)
+                print(f"  turn {i + 1:02d}: FAILED ({type(e).__name__})")
+        degrade = len(lat) >= 6 and (
+            sum(lat[-3:]) / 3 > 2 * max(sum(lat[:3]) / 3, 0.1))
+        result["soak"] = {
+            "requested": args.soak,
+            "completed_ok": ok,
+            "latencies": lat,
+            "degrading": degrade,
+        }
+        verdict = "STABLE" if ok == args.soak and not degrade else "UNSTABLE"
+        print(f"  soak: {ok}/{args.soak} completed | "
+              f"trend={'degrading' if degrade else 'flat'} | {verdict}")
+
     out = args.out or f"bench_{args.engine}.json"
     with open(out, "w") as f:
         json.dump(result, f, indent=2)
