@@ -2789,7 +2789,16 @@ func main() {
 	flag.BoolVar(&allowPaid, "allow-paid", false, "Allow using paid models for complex requests or as fallback")
 	flag.BoolVar(&allowIDE, "allow-ide", false, "Allow using local IDE models as fallback")
 	flag.BoolVar(&allowLocalOpenAI, "allow-local-openai", false, "Enable localOpenAI fallback (after capable cloud) and blockSmallCloudWhenLocalGPU")
+	checkModels := flag.Bool("check-models", false, "Verify every models.yaml model against live provider catalogs (OpenRouter/Groq/Cerebras/NVIDIA) and report retired/missing ids")
+	applyModels := flag.Bool("apply-models", false, "With -check-models: back up models.yaml, propose replacements for missing models, ask for approval")
+	probeModels := flag.Bool("probe-models", false, "With -check-models: also send a tiny chat ping per model to catch announced retirements still listed in catalogs")
+	modelDoctorYes := flag.Bool("yes", false, "With -apply-models: skip the approval prompt")
 	flag.Parse()
+
+	if *checkModels {
+		runModelDoctor(*applyModels, *modelDoctorYes, *probeModels)
+		return
+	}
 
 	// Clean up stale cooldowns on startup
 	cleanStaleCooldowns()
