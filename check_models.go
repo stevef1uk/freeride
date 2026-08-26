@@ -171,12 +171,21 @@ func fetchCatalog(provider string) providerCatalog {
 }
 
 // suggestReplacement picks the closest live id from the same provider's catalog,
-// skipping non-chat model families (embed/rerank/vision/audio/reward) that would
-// silently break agent routing if approved as replacements.
+// skipping non-chat model families (embed/rerank/vision/audio/reward) and any id
+// already listed in excludeModels (known-bad), so approval can't reintroduce rot.
 func suggestReplacement(catalogs map[string]providerCatalog, mc modelCheck) string {
 	cat, ok := catalogs[mc.provider]
 	if !ok || cat.err != nil || len(cat.ids) == 0 {
 		return ""
+	}
+	excluded := map[string]bool{}
+	for _, e := range globalModelsConfig.ExcludeModels {
+		excluded[strings.TrimSpace(e)] = true
+	}
+	for _, marker := range configWeakModelMarkers() {
+		if strings.Contains(strings.ToLower(mc.id), strings.ToLower(marker)) {
+			return "" // replacement would inherit the same weakness (e.g. -8b-)
+		}
 	}
 	wantVendor := ""
 	if i := strings.Index(mc.id, "/"); i >= 0 {
@@ -188,27 +197,36 @@ func suggestReplacement(catalogs map[string]providerCatalog, mc modelCheck) stri
 		candidates = append(candidates, id)
 	}
 	sort.Strings(candidates) // deterministic suggestions across runs
-	best, bestScore := "", -1
+	best, bestScore, bestBase := "", -1, -1
 	for _, id := range candidates {
+		if excluded[strings.TrimPrefix(id, mc.provider+"/")] || excluded[id] {
+			continue
+		}
 		lower := strings.ToLower(id)
 		if strings.Contains(lower, "embed") || strings.Contains(lower, "riva") ||
 			strings.Contains(lower, "whisper") || strings.Contains(lower, "guard") ||
 			strings.Contains(lower, "reward") || strings.Contains(lower, "-parse") ||
-			strings.Contains(lower, "rerank") || strings.Contains(lower, "tts") {
+			strings.Contains(lower, "rerank") || strings.Contains(lower, "tts") ||
+			strings.Contains(lower, "safety") || strings.Contains(lower, "moderation") {
 			continue
 		}
 		if !junkRe && strings.Contains(lower, "vision") {
 			continue // only suggest vision models when replacing a vision model
 		}
-		score := tokenOverlapScore(mc.id, id)
+		base := tokenOverlapScore(mc.id, id)
+		score := base
 		if vendorOf(id) == wantVendor {
 			score += 100 // strong preference: same vendor namespace
 		}
 		if score > bestScore {
-			best, bestScore = id, score
+			best, bestScore, bestBase = id, score, base
 		}
 	}
-	if bestScore <= 0 {
+	// Require real name overlap — vendor match alone must not produce a wild
+	// suggestion (e.g. nemotron-super -> llama3-chatqa, or unrelated Groq
+	// "compound" agentic systems). Four shared/prefix tokens means the ids are
+	// recognisably the same model lineage; anything weaker deserves human review.
+	if bestScore <= 0 || bestBase < 4 {
 		return ""
 	}
 	switch mc.provider {
@@ -432,7 +450,23 @@ func runModelDoctor(apply, autoYes, probe bool) {
 		fmt.Fprintf(os.Stderr, "read models.yaml: %v\n", err)
 		os.Exit(1)
 	}
-	updated := string(data)
+	lines := strings.Split(string(data), "\n")
+	inExclude := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "excludeModels:" {
+			inExclude = true
+			continue
+		}
+		if inExclude && trimmed != "" && !strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, "#") {
+			inExclude = false // next top-level key ends the block
+		}
+		if inExclude {
+			lines[i] = "\x00SKIP\x00" + line // masked from replacement, restored below
+		}
+	}
+	masked := strings.Join(lines, "\n")
+	updated := masked
 	changed := 0
 	fmt.Println("\nProposed changes:")
 	for _, m := range models {
@@ -444,17 +478,72 @@ func runModelDoctor(apply, autoYes, probe bool) {
 		if n == 0 {
 			continue
 		}
-		fmt.Printf("  %s -> %s (%d reference(s))\n", m.id, m.replacement, n)
-		changed += n
+		nMasked := strings.Count(updated, "\x00SKIP\x00"+oldQuoted)
+		fmt.Printf("  %s -> %s (%d reference(s))%s\n", m.id, m.replacement, n-nMasked,
+			map[bool]string{true: " (excludeModels refs left untouched)", false: ""}[nMasked > 0])
+		changed += n - nMasked
 		updated = strings.ReplaceAll(updated, oldQuoted, newQuoted)
 	}
-	if changed == 0 {
+	// Collect dead ids with no confident replacement — offer to prune them
+	// (removing the dead entry lets the chain fall through to the next live
+	// candidate instead of burning seconds on a 404 each request).
+	var prunable []modelCheck
+	for _, m := range models {
+		if m.status == "MISSING" && m.replacement == "" {
+			prunable = append(prunable, m)
+		}
+	}
+	pruned := 0
+	if len(prunable) > 0 {
+		fmt.Printf("\n%d dead model(s) have no confident replacement and will be left as dead fallbacks:\n", len(prunable))
+		for _, m := range prunable {
+			fmt.Printf("  %s  (%s)\n", m.id, strings.Join(m.sources, ","))
+		}
+		fmt.Println("Tip: remove these ids from their lists so the chain skips them, or pick a live peer manually.")
+		if apply {
+			// Stage pruning: remove dead ids from non-excluded sections (masked lines are skipped).
+			lines2 := strings.Split(updated, "\n")
+			keep := make([]string, 0, len(lines2))
+			for _, line := range lines2 {
+				if strings.HasPrefix(line, "\x00SKIP\x00") {
+					keep = append(keep, line)
+					continue
+				}
+				drop := false
+				for _, m := range prunable {
+					if strings.Contains(line, `"`+m.id+`"`) {
+						drop = true
+						break
+					}
+				}
+				if drop {
+					pruned++
+					continue
+				}
+				keep = append(keep, line)
+			}
+			updated = strings.Join(keep, "\n")
+			if pruned > 0 {
+				fmt.Printf("Staged pruning of %d dead entries (outside excludeModels).\n", pruned)
+			}
+		}
+	}
+	updated = strings.ReplaceAll(updated, "\x00SKIP\x00", "")
+	if changed == 0 && pruned == 0 {
 		fmt.Println("No safe textual replacements available (review MISSING list manually).")
+		return
+	}
+	if changed == 0 && !apply {
+		fmt.Println("Re-run with -apply-models to prune, or edit manually.")
 		return
 	}
 	fmt.Printf("\nBackup: %s\n", backup)
 	if !autoYes {
-		fmt.Print("Apply these changes to models.yaml? [y/N] ")
+		if pruned > 0 {
+			fmt.Printf("Apply %d replacement(s) and prune %d dead entries? [y/N] ", changed, pruned)
+		} else {
+			fmt.Print("Apply these changes to models.yaml? [y/N] ")
+		}
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
 		answer = strings.ToLower(strings.TrimSpace(answer))
@@ -471,8 +560,13 @@ func runModelDoctor(apply, autoYes, probe bool) {
 		fmt.Fprintf(os.Stderr, "write models.yaml: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Wrote %d replacement(s) to %s (old version saved as %s). Restart freeride to reload.\n",
-		changed, filepath.Base(modelsYAMLPath()), backup)
+	if pruned > 0 {
+		fmt.Printf("Wrote %d replacement(s) and pruned %d dead entries in %s (old version saved as %s). Restart freeride to reload.\n",
+			changed, pruned, filepath.Base(modelsYAMLPath()), backup)
+	} else {
+		fmt.Printf("Wrote %d replacement(s) to %s (old version saved as %s). Restart freeride to reload.\n",
+			changed, filepath.Base(modelsYAMLPath()), backup)
+	}
 }
 
 func modelsYAMLPath() string { return "models.yaml" }
