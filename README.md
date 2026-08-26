@@ -194,6 +194,7 @@ See [Gas Town Integration — `make do_it_all` bootstrap](#make-do_it_all-bootst
 - `--allow-paid`: Allows paid models as fallback. **Disabled by default** (strict zero-cost mode).
 - `--allow-ide`: Allows `ideModels` entries in `models.yaml` (local IDE bridges) as a last-resort fallback. **Disabled by default**.
 - `--allow-local-openai`: Enables `localOpenAI` fallback (after capable cloud) and applies `blockSmallCloudWhenLocalGPU` from `models.yaml`. **Disabled by default**. Does **not** force local over cloud — keep Gas Town `LLM_MODEL` on a strong cloud id (e.g. `meta/llama-3.3-70b-instruct`).
+- `--check-models`: Model doctor — verify every `models.yaml` id against live provider catalogs (OpenRouter, Groq, Cerebras, NVIDIA). See [Model Health Check](#model-health-check).
 
 ---
 
@@ -879,6 +880,23 @@ localOpenAI: []   # or see local llama-server section above
 - `ollama/deepseek-v4-pro` ✅
 
 The proxy auto-discovers models from OpenRouter, NVIDIA, and Ollama Cloud; **`geminiModels`** are listed when `GEMINI_API_KEY` is set. `models.yaml` prioritizes the listed models. Optional **`localOpenAI`** backends are not used unless you pass **`--allow-local-openai`**.
+
+### Model Health Check
+
+Providers retire and add models constantly — a dead id in a `rolePrepend` chain burns seconds on 404 fallbacks each request. Freeride ships a doctor that checks every id in `models.yaml` against each provider's live `/v1/models` catalog:
+
+```bash
+./freeride -check-models                          # report only
+./freeride -check-models -probe-models            # + tiny live ping per model
+./freeride -check-models -apply-models            # backup + propose fixes, prompt y/N
+./freeride -check-models -apply-models -yes       # non-interactive
+```
+
+* Checks **OpenRouter** (public), **Groq** / **Cerebras** / **NVIDIA NIM** (needs `*_API_KEY` in `.env`). `ollama/*` and local entries are skipped.
+* Reports `OK` / `MISSING` / `SKIP` (known-bad in `excludeModels` or no key). For `MISSING` with a confident same-vendor peer (≥4 shared name tokens, not `weakModelMarkers`, not `embed`/`guard`/`safety` families) it suggests a replacement.
+* `MISSING` with no suggestion is offered for pruning — removing the dead entry lets the chain fall through to the next live candidate.
+* `-apply-models` saves `models.yaml.bak-YYYYMMDD-HHMMSS` before any write, replaces exact quoted ids (comments preserved, `excludeModels` untouched), and asks for approval unless `-yes`. Restart freeride to reload.
+* Run weekly or when `freeride_live.log` shows bursts of 404/429 fallbacks.
 
 ---
 
