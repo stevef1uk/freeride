@@ -1,0 +1,96 @@
+{
+  "engine": "freetoken",
+  "model": "Qwen3.6-35B-A3B-NVFP4",
+  "finished_at": "2026-08-24T18:47:32",
+  "tests": {
+    "t1_heredoc": {
+      "pass": false,
+      "checks": {
+        "cmd_prefix": false,
+        "quoted_heredoc": false,
+        "eof_terminator_line": false,
+        "both_headings": false,
+        "no_fences": true
+      },
+      "latency_s": 25.0,
+      "completion_tokens": 0,
+      "tok_per_s": 0.0,
+      "reasoning_len": 0,
+      "finish": "error:TimeoutError",
+      "content_head": ""
+    },
+    "t2_json_purity": {
+      "pass": false,
+      "checks": {
+        "pure_json": false,
+        "no_fences": true,
+        "no_cmd_lines": true
+      },
+      "latency_s": 25.0,
+      "completion_tokens": 0,
+      "tok_per_s": 0.0,
+      "reasoning_len": 0,
+      "finish": "error:TimeoutError",
+      "content_head": ""
+    },
+    "t3_write_marker": {
+      "pass": false,
+      "checks": {
+        "write_path_prefix": false,
+        "end_marker": false,
+        "fastapi_route": false,
+        "pong_body": false,
+        "no_fences": true
+      },
+      "latency_s": 25.0,
+      "completion_tokens": 0,
+      "tok_per_s": 0.0,
+      "reasoning_len": 0,
+      "finish": "error:TimeoutError",
+      "content_head": ""
+    },
+    "t4_edit_search": {
+      "pass": false,
+      "checks": {
+        "search_marker": false,
+        "divider": false,
+        "replace_marker": false,
+        "exact_old_line_in_search": false,
+        "new_line_in_replace": false
+      },
+      "latency_s": 25.0,
+      "completion_tokens": 0,
+      "tok_per_s": 0.0,
+      "reasoning_len": 0,
+      "finish": "error:TimeoutError",
+      "content_head": ""
+    },
+    "t5_long_context": {
+      "pass": false,
+      "checks": {
+        "port_7412": false,
+        "token_MT-9917": false,
+        "backup_0340": false
+      },
+      "latency_s": 25.0,
+      "completion_tokens": 0,
+      "tok_per_s": 0.0,
+      "reasoning_len": 0,
+      "finish": "error:TimeoutError",
+      "content_head": ""
+    }
+  },
+  "soak": {
+    "requested": 6,
+    "completed_ok": 0,
+    "latencies": [
+      25.0,
+      25.0,
+      25.0,
+      25.0,
+      25.0,
+      25.0
+    ],
+    "degrading": false
+  }
+}
