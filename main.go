@@ -2793,10 +2793,12 @@ func main() {
 	applyModels := flag.Bool("apply-models", false, "With -check-models: back up models.yaml, propose replacements for missing models, ask for approval")
 	probeModels := flag.Bool("probe-models", false, "With -check-models: also send a tiny chat ping per model to catch announced retirements still listed in catalogs")
 	modelDoctorYes := flag.Bool("yes", false, "With -apply-models: skip the approval prompt")
+	gastownDir := flag.String("gastown-dir", "", "With -apply-models: path to gastown project dir (contains freeride_models.json, models.json). Updates configs to match models.yaml rolePrepend.")
+	townDir := flag.String("town-dir", "", "With -apply-models: path to town dir (e.g. ~/gt). Deploys updated gastown configs to rig polecats.")
 	flag.Parse()
 
 	if *checkModels {
-		runModelDoctor(*applyModels, *modelDoctorYes, *probeModels)
+		runModelDoctor(*applyModels, *modelDoctorYes, *probeModels, *gastownDir, *townDir)
 		return
 	}
 
@@ -3740,28 +3742,26 @@ func selectCandidatesBase(ctx candidateContext) []string {
 	}
 
 	// Tier 0.6: Reliable Models (Always preferred for Gas Town)
-	if ctx.role != "" {
-		for _, nid := range ctx.conf.NvidiaReliable {
-			if roleRequiresMassiveModel(ctx.role) && !isMassiveModel(nid) {
-				continue
-			}
-			if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
-				candidates = append(candidates, nid)
-			}
+	for _, nid := range ctx.conf.NvidiaReliable {
+		if ctx.role != "" && roleRequiresMassiveModel(ctx.role) && !isMassiveModel(nid) {
+			continue
 		}
-		for _, fid := range ctx.conf.ReliableFree {
-			if roleRequiresMassiveModel(ctx.role) && !isMassiveModel(fid) {
-				continue
-			}
-			if !ctx.isCooldown(fid) && !ctx.isExcluded(fid) {
-				candidates = append(candidates, fid)
-			}
+		if !ctx.isCooldown(nid) && !ctx.isExcluded(nid) {
+			candidates = append(candidates, nid)
 		}
-		for _, m := range ctx.ollamaModels {
-			modelName := "ollama/" + m.Name
-			if isMassiveModel(modelName) && !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
-				candidates = append(candidates, modelName)
-			}
+	}
+	for _, fid := range ctx.conf.ReliableFree {
+		if ctx.role != "" && roleRequiresMassiveModel(ctx.role) && !isMassiveModel(fid) {
+			continue
+		}
+		if !ctx.isCooldown(fid) && !ctx.isExcluded(fid) {
+			candidates = append(candidates, fid)
+		}
+	}
+	for _, m := range ctx.ollamaModels {
+		modelName := "ollama/" + m.Name
+		if isMassiveModel(modelName) && !ctx.isCooldown(modelName) && !ctx.isExcluded(modelName) {
+			candidates = append(candidates, modelName)
 		}
 	}
 

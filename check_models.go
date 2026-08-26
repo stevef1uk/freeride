@@ -332,7 +332,7 @@ func readErrSnippet(resp *http.Response) string {
 	return strings.ReplaceAll(string(buf[:n]), "\n", " ")
 }
 
-func runModelDoctor(apply, autoYes, probe bool) {
+func runModelDoctor(apply, autoYes, probe bool, gastownDir, townDir string) {
 	loadModelsConfig()
 	models := collectReferencedModels()
 	fmt.Printf("Model doctor: %d unique model ids referenced in models.yaml\n\n", len(models))
@@ -567,10 +567,222 @@ func runModelDoctor(apply, autoYes, probe bool) {
 		fmt.Printf("Wrote %d replacement(s) to %s (old version saved as %s). Restart freeride to reload.\n",
 			changed, filepath.Base(modelsYAMLPath()), backup)
 	}
+	if gastownDir != "" || townDir != "" {
+		syncGastownConfigs(gastownDir, townDir)
+	}
 }
 
 func modelsYAMLPath() string { return "models.yaml" }
 
+// syncGastownConfigs updates gastown's freeride_models.json and models.json
+// in the project dir, then deploys them to the town dir's polecats.
+func syncGastownConfigs(gastownDir, townDir string) {
+	// Parse rolePrepend from updated models.yaml
+	data, err := os.ReadFile(modelsYAMLPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  read models.yaml for gastown sync: %v\n", err)
+		return
+	}
+	rolePrepend := parseRolePrepend(string(data))
+
+	// 1. Update gastown project configs
+	if gastownDir != "" {
+		fmt.Printf("\nUpdating gastown configs in %s...\n", gastownDir)
+		freidePath := filepath.Join(gastownDir, "freeride_models.json")
+		modelsPath := filepath.Join(gastownDir, "models.json")
+		if _, err := os.Stat(freidePath); err == nil {
+			syncFreideModels(freidePath, rolePrepend)
+		}
+		if _, err := os.Stat(modelsPath); err == nil {
+			syncModelsJSON(modelsPath, rolePrepend)
+		}
+	}
+
+	// 2. Deploy to town dir polecats
+	if townDir != "" {
+		fmt.Printf("\nDeploying configs to town dir %s...\n", townDir)
+		deployToTownDir(townDir, rolePrepend)
+	}
+}
+
+// parseRolePrepend extracts role -> []model from YAML rolePrepend block.
+func parseRolePrepend(yamlStr string) map[string][]string {
+	result := make(map[string][]string)
+	lines := strings.Split(yamlStr, "\n")
+	inPrepend := false
+	currentRole := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "rolePrepend:" {
+			inPrepend = true
+			continue
+		}
+		if inPrepend {
+			indent := len(line) - len(strings.TrimLeft(line, " "))
+			if indent <= 2 && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				inPrepend = false
+				continue
+			}
+			if strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
+				role := strings.TrimSuffix(trimmed, ":")
+				currentRole = role
+				result[currentRole] = nil
+				continue
+			}
+			if strings.HasPrefix(trimmed, "- ") && currentRole != "" {
+				model := strings.Trim(trimmed[2:], `" `)
+				if model != "" {
+					result[currentRole] = append(result[currentRole], model)
+				}
+			}
+		}
+	}
+	return result
+}
+
+// syncFreideModels updates freeride_models.json agent model entries.
+func syncFreideModels(path string, rolePrepend map[string][]string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  read %s: %v\n", filepath.Base(path), err)
+		return
+	}
+	var config struct {
+		Agents     map[string]map[string]interface{} `json:"agents"`
+		RoleAgents map[string]string                 `json:"role_agents"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		fmt.Fprintf(os.Stderr, "  parse %s: %v\n", filepath.Base(path), err)
+		return
+	}
+	changed := 0
+	for role, chain := range rolePrepend {
+		if len(chain) == 0 {
+			continue
+		}
+		firstModel := chain[0]
+		agentName, ok := config.RoleAgents[role]
+		if !ok {
+			continue
+		}
+		agentCfg, ok := config.Agents[agentName]
+		if !ok {
+			continue
+		}
+		oldModel, _ := agentCfg["model"].(string)
+		if oldModel == firstModel {
+			continue
+		}
+		agentCfg["model"] = firstModel
+		fmt.Printf("  %s: %s -> %s (agent %s)\n", role, oldModel, firstModel, agentName)
+		changed++
+	}
+	if changed > 0 {
+		out, _ := json.MarshalIndent(config, "", "    ")
+		if err := os.WriteFile(path, out, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "  write %s: %v\n", filepath.Base(path), err)
+		} else {
+			fmt.Printf("  Updated %s (%d role(s))\n", filepath.Base(path), changed)
+		}
+	} else {
+		fmt.Printf("  %s already in sync\n", filepath.Base(path))
+	}
+}
+
+// syncModelsJSON updates models.json role model entries.
+func syncModelsJSON(path string, rolePrepend map[string][]string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  read %s: %v\n", filepath.Base(path), err)
+		return
+	}
+	var config struct {
+		Models map[string]string `json:"models"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		fmt.Fprintf(os.Stderr, "  parse %s: %v\n", filepath.Base(path), err)
+		return
+	}
+	changed := 0
+	for role, chain := range rolePrepend {
+		if len(chain) == 0 {
+			continue
+		}
+		firstModel := chain[0]
+		oldModel, ok := config.Models[role]
+		if !ok || oldModel == firstModel {
+			continue
+		}
+		config.Models[role] = firstModel
+		fmt.Printf("  %s: %s -> %s\n", role, oldModel, firstModel)
+		changed++
+	}
+	if changed > 0 {
+		out, _ := json.MarshalIndent(config, "", "    ")
+		if err := os.WriteFile(path, out, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "  write %s: %v\n", filepath.Base(path), err)
+		} else {
+			fmt.Printf("  Updated %s (%d role(s))\n", filepath.Base(path), changed)
+		}
+	} else {
+		fmt.Printf("  %s already in sync\n", filepath.Base(path))
+	}
+}
+
+// deployToTownDir copies freeride_models.json to all rig polecats in the town dir.
+func deployToTownDir(townDir string, rolePrepend map[string][]string) {
+	// Find all rig dirs under townDir
+	entries, err := os.ReadDir(townDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  read town dir: %v\n", err)
+		return
+	}
+	deployed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		rigDir := filepath.Join(townDir, entry.Name(), "polecats")
+		if info, err := os.Stat(rigDir); err != nil || !info.IsDir() {
+			continue
+		}
+		// Copy freeride_models.json into each polecat's working dir
+		polecats, err := os.ReadDir(rigDir)
+		if err != nil {
+			continue
+		}
+		for _, p := range polecats {
+			if !p.IsDir() {
+				continue
+			}
+			polecatDir := filepath.Join(rigDir, p.Name())
+			dest := filepath.Join(polecatDir, "freeride_models.json")
+			// Check if source exists in gastown project
+			src := filepath.Join(townDir, "..", "dev", "freeride", "gastown", "freeride_models.json")
+			if _, err := os.Stat(src); err != nil {
+				continue
+			}
+			srcData, err := os.ReadFile(src)
+			if err != nil {
+				continue
+			}
+			if err := os.WriteFile(dest, srcData, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "  write %s: %v\n", dest, err)
+				continue
+			}
+			fmt.Printf("  Deployed to %s\n", dest)
+			deployed++
+		}
+	}
+	if deployed == 0 {
+		fmt.Println("  No polecat dirs found to deploy to")
+	}
+}
+
+// syncGastownModels updates gastown's freeride_models.json and models.json
+// to match the rolePrepend chains in models.yaml. This keeps the agent binary
+// selection in sync with the proxy's routing, so the base model sent by the
+// agent is the same one the proxy would use as first choice.
 // newAuthorizedRequest builds an HTTP request with an optional Bearer token and body.
 func newAuthorizedRequest(method, url, bearer, body string) (*http.Request, error) {
 	var reader io.Reader

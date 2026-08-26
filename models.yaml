@@ -39,10 +39,10 @@ rolePrependBeforeOriginal:
   - polecat
 
 rolePrepend:
-  # stealth/ox-alpha first everywhere: free OpenRouter tier — try it before any
-  # paid prepend; on 429/cooldown the chain falls through to the paid entries.
+  # polecat: free prepend chain; on 429/cooldown falls through to paid entries.
   polecat:
     - "openai/gpt-5.6-luna"
+    - "minimax/minimax-m3"
     - "cerebras/gpt-oss-120b"
     - "deepseek/deepseek-v4-flash"
   planner:
@@ -185,7 +185,6 @@ groqPerformance:
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
   - "qwen/qwen3-coder"
-  - "nousresearch/hermes-3-llama-3.1-405b"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
 # 70b/nemotron-super for agents; 11b for lighter tasks.
