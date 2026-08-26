@@ -318,6 +318,8 @@ ideModels:
 # different model than Polecat so it can catch Polecat's mistakes.
 roleLocalExclude:
   - qa
+  - architect
+  - planner
 
 localOpenAI:
   # llama.cpp server (:8090) — CURRENT resident engine (stable across hours of
