@@ -133,6 +133,65 @@ def print_table(interval_name: str, attempts: Counter, completions: Counter) -> 
     print(sep)
     print()
 
+# --- Throughput section ---
+
+_THROUGHPUT = re.compile(
+    r"\[llm\] response received: status=(\d+) "
+    r"duration=((?:\d+m)?[\d.]+)s bytes=(\d+) model=(\S+)"
+)
+
+def _parse_duration(s: str) -> float:
+    """Parse '4.094s' or '2m23.467s' into seconds."""
+    if "m" in s:
+        mins, _, secs = s.partition("m")
+        return float(mins) * 60 + float(secs.rstrip("s"))
+    return float(s.rstrip("s"))
+
+def parse_throughput(lines: list[str]) -> dict[str, dict]:
+    """Parse agent session log lines with duration+bytes to estimate tok/s."""
+    results = {}  # model -> {count, total_tokens, total_seconds}
+    for line in lines:
+        m = _THROUGHPUT.search(line)
+        if not m or m.group(1) != "200":
+            continue
+        dur_s = _parse_duration(m.group(2))
+        nbytes = int(m.group(3))
+        model = m.group(4)
+        # Estimate tokens: ~3.5 bytes per token for JSON/English text
+        est_tokens = max(1, int(nbytes / 3.5))
+        tps = est_tokens / dur_s if dur_s > 0 else 0
+        if model not in results:
+            results[model] = {"count": 0, "total_tokens": 0, "total_seconds": 0.0, "tps_samples": []}
+        r = results[model]
+        r["count"] += 1
+        r["total_tokens"] += est_tokens
+        r["total_seconds"] += dur_s
+        r["tps_samples"].append(tps)
+    return results
+
+def print_throughput(results: dict) -> None:
+    if not results:
+        return
+    print("=== Average Tokens/Second by Model ===")
+    models = sorted(results, key=lambda k: -results[k]["total_seconds"])
+    w_model = max(len("model"), *(len(m) for m in models))
+    w_count = len("requests")
+    w_tps = len("avg tok/s")
+    w_time = len("total time")
+    sep = f"+-{'-' * w_model}-+-{'-' * w_count}-+-{'-' * w_tps}-+-{'-' * w_time}-+"
+    row = "| {:<{}} | {:>{}} | {:>{}} | {:>{}} |"
+    print(sep)
+    print(row.format("model", w_model, "requests", w_count, "avg tok/s", w_tps, "total time", w_time))
+    print(sep)
+    for m in models:
+        r = results[m]
+        avg_tps = r["total_tokens"] / r["total_seconds"] if r["total_seconds"] > 0 else 0
+        print(row.format(m[:w_model], w_model, r["count"], w_count,
+                         f"{avg_tps:.1f}", w_tps, f"{r['total_seconds']:.0f}s", w_time))
+    print(sep)
+    print()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Print freeride proxy upstream model performance over time."
@@ -143,6 +202,12 @@ def main() -> None:
         default="freeride_live.log",
         help="Path to log file (default: freeride_live.log in cwd). Use '-' for stdin.",
     )
+    ap.add_argument(
+        "--sessions",
+        default=None,
+        help="Glob pattern for gt-agent session logs (e.g. '/home/stevef/gt/logs/sessions/*.log') "
+             "to report estimated tokens/second per model.",
+    )
     args = ap.parse_args()
 
     lines = iter_lines(args.logfile)
@@ -150,6 +215,14 @@ def main() -> None:
     
     for interval in reversed(list(intervals)):
         print_table(interval, attempts[interval], completions[interval])
+
+    if args.sessions:
+        import glob as globmod
+        session_lines = []
+        for f in sorted(globmod.glob(args.sessions)):
+            session_lines.extend(iter_lines(f))
+        tp_results = parse_throughput(session_lines)
+        print_throughput(tp_results)
 
 if __name__ == "__main__":
     main()
