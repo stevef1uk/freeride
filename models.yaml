@@ -41,31 +41,28 @@ rolePrependBeforeOriginal:
 rolePrepend:
   # polecat: free prepend chain; on 429/cooldown falls through to paid entries.
   polecat:
+    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
-    - "minimax/minimax-m3"
-    - "cerebras/gpt-oss-120b"
-    - "deepseek/deepseek-v4-flash"
+    - "nvidia/nemotron-3-super-120b-a12b"
   planner:
+    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
-    - "deepseek/deepseek-v4-flash"
   architect:
+    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
-    - "cerebras/gpt-oss-120b"
   qa:
+    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
     - "google/gemini-3.5-flash"
-    - "google/gemini-2.5-flash-lite"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
-  - pattern: "qwen3-coder"
+  - pattern: "minimax-m3"
     boost: 10.0
   - pattern: "gemini-3.5-flash"
     boost: 8.0
   - pattern: "gemini-2.5-flash-lite"
     boost: 4.0
-  - pattern: "mistral-7b-instruct"
-    boost: 1.0
 
 # Model-name classification heuristics (previously hardcoded in Go). All entries
 # are substrings matched against lowercase model ids; markers may be joined with
@@ -172,7 +169,7 @@ geminiModels:
 # Small entries (8b) are blocked for polecat when local GPU is on (blockSmallCloudWhenLocalGPU).
 # Priority 0.1: Free/Ultra-cheap Cerebras (High speed, zero/low cost)
 cerebrasBudget:
-  - "cerebras/gpt-oss-120b"                  # Free (Preview)
+  # All Cerebras models failing (0% success) — removed
 
 # Priority 0.5: Paid Cerebras Performance (Used for COMPLEX only)
 cerebrasPerformance:
@@ -184,7 +181,8 @@ groqPerformance:
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
-  - "qwen/qwen3-coder"
+  - "minimax/minimax-m3:free"
+  - "dots-studio/dots-3-note-preview:free"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
 # 70b/nemotron-super for agents; 11b for lighter tasks.
@@ -256,6 +254,22 @@ excludeModels:
   - "allam-2-7b"                                  # TOO SMALL (7B) — produces garbled output on agent tasks
   - "allam-2-7b:free"                             # TOO SMALL (7B)
   - "nvidia/nemotron-3.5-lightning-30b-a3b"     # LIGHTNING MODEL — too weak for coding/agent tasks
+  # Models with 0% success rate in live testing (2026-08-27)
+  - "cerebras/gpt-oss-120b"                     # 0% success — Cerebras catalog issues
+  - "cerebras/gemma-4-31b"                      # 0% success — Cerebras catalog issues
+  - "z-ai/glm-5.2:free"                         # 0% success — fails in practice
+  - "qwen/qwen3-coder"                          # 0% success — fails in practice
+  - "groq/groq/compound"                        # 0% success
+  - "groq/groq/compound-mini"                   # 0% success
+  - "groq/openai/gpt-oss-120b"                  # 0% success
+  - "groq/openai/gpt-oss-20b"                   # 0% success
+  - "groq/openai/gpt-oss-safeguard-20b"         # 0% success
+  - "groq/canopylabs/orpheus-v1-english"        # 0% success — requires terms acceptance
+  - "groq/canopylabs/orpheus-arabic-saudi"      # 0% success — requires terms acceptance
+  - "groq/meta-llama/llama-prompt-guard-2-22m"  # 0% success — safety model, not chat
+  - "groq/meta-llama/llama-prompt-guard-2-86m"  # 0% success — safety model, not chat
+  - "groq/qwen/qwen3.6-27b"                    # 0% success — rate limited
+  - "mistralai/mistral-nemotron"                # 0% success
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
 # capable cloud is tried first; local llama-server is fallback only (end of candidate list).
