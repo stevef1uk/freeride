@@ -37,6 +37,7 @@ rolePrependBeforeOriginal:
   - planner
   - qa
   - polecat
+  - tester
 
 rolePrepend:
   # polecat: free prepend chain; on 429/cooldown falls through to paid entries.
@@ -48,6 +49,9 @@ rolePrepend:
     - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
   architect:
+    - "minimax/minimax-m3:free"
+    - "openai/gpt-5.6-luna"
+  tester:
     - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
   qa:

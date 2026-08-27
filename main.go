@@ -2843,7 +2843,7 @@ func main() {
 		port = "11434"
 	}
 
-	log.Printf("Proxy starting on :%s", port)
+	log.Printf("Proxy starting on :%s (allowPaid=%v, allowLocalOpenAI=%v, allowIDE=%v)", port, allowPaid, allowLocalOpenAI, allowIDE)
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
