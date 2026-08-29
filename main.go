@@ -1776,7 +1776,9 @@ lowerBody := strings.ToLower(bodyStr)
 				strings.Contains(lowerBody, "insufficient balance") ||
 				strings.Contains(lowerBody, "insufficient_quota") ||
 				strings.Contains(lowerBody, "out of credit") ||
-				strings.Contains(lowerBody, "payment required")
+				strings.Contains(lowerBody, "payment required") ||
+				strings.Contains(lowerBody, "in_flight_budget_exhausted") ||
+				strings.Contains(lowerBody, "exceed your available credits")
 
 			if isInsufficientCredits {
 					markCustomCooldown(candidate, time.Hour)
