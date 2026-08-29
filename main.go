@@ -1771,13 +1771,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					strings.Contains(bodyStr, "maximum context length") ||
 					strings.Contains(bodyStr, "context window")
 
-				lowerBody := strings.ToLower(bodyStr)
-				isInsufficientCredits := strings.Contains(lowerBody, "insufficient credit") ||
-					strings.Contains(lowerBody, "insufficient balance") ||
-					strings.Contains(lowerBody, "insufficient_quota") ||
-					strings.Contains(lowerBody, "out of credit")
+lowerBody := strings.ToLower(bodyStr)
+			isInsufficientCredits := strings.Contains(lowerBody, "insufficient credit") ||
+				strings.Contains(lowerBody, "insufficient balance") ||
+				strings.Contains(lowerBody, "insufficient_quota") ||
+				strings.Contains(lowerBody, "out of credit") ||
+				strings.Contains(lowerBody, "payment required")
 
-				if isInsufficientCredits {
+			if isInsufficientCredits {
 					markCustomCooldown(candidate, time.Hour)
 				} else if !isContextError {
 					markCooldown(candidate)
@@ -3981,6 +3982,20 @@ func selectCandidatesBase(ctx candidateContext) []string {
 			}
 		}
 		if isCurated {
+			candidates = append(candidates, ctx.originalModel)
+		}
+	}
+
+	// Tier 4.5: Original requested model (if Paid & allowPaid) — user has API key/credit for it
+	if ctx.originalModel != "" && !isOriginalFree && !ctx.isCooldown(ctx.originalModel) && ctx.allowPaid && !ctx.isExcluded(ctx.originalModel) {
+		already := false
+		for _, c := range candidates {
+			if c == ctx.originalModel {
+				already = true
+				break
+			}
+		}
+		if !already {
 			candidates = append(candidates, ctx.originalModel)
 		}
 	}
