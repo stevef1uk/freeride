@@ -58,9 +58,9 @@ rolePrepend:
     - "deepseek/deepseek-v4-flash"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
+# minimax-m3 removed from reliableFree — too weak for architect/qa/planner roles.
+# Keeping gemini boosts for lighter roles (refinery, deacon, witness).
 freeModelScoreBoost:
-  - pattern: "minimax-m3"
-    boost: 10.0
   - pattern: "gemini-3.5-flash"
     boost: 8.0
   - pattern: "gemini-2.5-flash-lite"
@@ -182,8 +182,9 @@ groqBudget:
 groqPerformance:
 
 # Priority 1: Verified working free/paid models (OpenRouter)
+# minimax-m3 removed — too weak for complex roles (architect/qa/planner).
+# Those roles use rolePrepend (openai/gpt-5.6-luna) instead.
 reliableFree:
-  - "minimax/minimax-m3:free"
   - "dots-studio/dots-3-note-preview:free"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
