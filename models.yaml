@@ -40,24 +40,22 @@ rolePrependBeforeOriginal:
   - tester
 
 rolePrepend:
-  # polecat: free prepend chain; on 429/cooldown falls through to paid entries.
   polecat:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
-    - "nvidia/nemotron-3-super-120b-a12b"
+    - "deepseek/deepseek-v4-flash"
+    - "openai/gpt-4o-mini"
   planner:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
+    - "deepseek/deepseek-v4-flash"
   architect:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
+    - "deepseek/deepseek-v4-flash"
   tester:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
+    - "deepseek/deepseek-v4-flash"
   qa:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
-    - "google/gemini-3.5-flash"
+    - "deepseek/deepseek-v4-flash"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
