@@ -1492,11 +1492,18 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(candidates) == 0 {
-			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
-			return
+			// With --allow-paid, try the user's explicitly requested model even if free models are in cooldown
+			if allowPaid && originalModel != "" && !isOriginalFree && !isCooldown(originalModel) && !isCandidateExcluded(originalModel) {
+				log.Printf("[DEBUG] All free models in cooldown, but allowPaid=true — trying user's requested paid model: %s", originalModel)
+				candidates = append(candidates, originalModel)
+			}
+			if len(candidates) == 0 {
+				log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
+				return
+			}
 		}
 	}
 
