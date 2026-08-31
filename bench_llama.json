@@ -1,0 +1,83 @@
+{
+  "engine": "llama",
+  "model": "byteshape/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+  "finished_at": "2026-08-23T22:46:45",
+  "tests": {
+    "t1_heredoc": {
+      "pass": false,
+      "checks": {
+        "cmd_prefix": true,
+        "quoted_heredoc": false,
+        "eof_terminator_line": false,
+        "both_headings": true,
+        "no_fences": true
+      },
+      "latency_s": 0.3,
+      "completion_tokens": 30,
+      "tok_per_s": 100.0,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "CMD: bash -c 'cat > architecture.md << '\\''EOF\n### go-module\n\n### core\n\nEOF'\\''; cat architecture.md'"
+    },
+    "t2_json_purity": {
+      "pass": true,
+      "checks": {
+        "pure_json": true,
+        "no_fences": true,
+        "no_cmd_lines": true
+      },
+      "latency_s": 0.15,
+      "completion_tokens": 13,
+      "tok_per_s": 86.7,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "{\"outcome\":\"success\",\"summary\":\"wrote main.py\"}"
+    },
+    "t3_write_marker": {
+      "pass": false,
+      "checks": {
+        "write_path_prefix": true,
+        "end_marker": true,
+        "fastapi_route": true,
+        "pong_body": true,
+        "no_fences": false
+      },
+      "latency_s": 0.5,
+      "completion_tokens": 45,
+      "tok_per_s": 90.0,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "WRITE: pingapp/main.py\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/ping\")\ndef ping():\n    return {\"message\": \"pong\"}\n\n```\n---END WRITE---"
+    },
+    "t4_edit_search": {
+      "pass": true,
+      "checks": {
+        "search_marker": true,
+        "divider": true,
+        "replace_marker": true,
+        "exact_old_line_in_search": true,
+        "new_line_in_replace": true
+      },
+      "latency_s": 0.72,
+      "completion_tokens": 71,
+      "tok_per_s": 98.6,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "EDIT: pingapp/main.py\n<<<<<<< SEARCH\nfrom fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/ping\")\ndef ping():\n    return {\"message\": \"pong\"}\n=======\nfrom fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/ping\")\ndef ping():\n    return {\"message\": \"pong-ok\"}\n>>>>>>> REPLACE"
+    },
+    "t5_long_context": {
+      "pass": true,
+      "checks": {
+        "port_7412": true,
+        "token_MT-9917": true,
+        "backup_0340": true
+      },
+      "latency_s": 0.28,
+      "completion_tokens": 19,
+      "tok_per_s": 67.9,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "7412,MT-9917,03:40 UTC"
+    }
+  }
+}

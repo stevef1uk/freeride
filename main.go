@@ -1492,18 +1492,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(candidates) == 0 {
-			// With --allow-paid, try the user's explicitly requested model even if free models are in cooldown
-			if allowPaid && originalModel != "" && !isOriginalFree && !isCooldown(originalModel) && !isCandidateExcluded(originalModel) {
-				log.Printf("[DEBUG] All free models in cooldown, but allowPaid=true — trying user's requested paid model: %s", originalModel)
-				candidates = append(candidates, originalModel)
-			}
-			if len(candidates) == 0 {
-				log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
-				return
-			}
+			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
+			return
 		}
 	}
 
@@ -1778,16 +1771,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 					strings.Contains(bodyStr, "maximum context length") ||
 					strings.Contains(bodyStr, "context window")
 
-lowerBody := strings.ToLower(bodyStr)
-			isInsufficientCredits := strings.Contains(lowerBody, "insufficient credit") ||
-				strings.Contains(lowerBody, "insufficient balance") ||
-				strings.Contains(lowerBody, "insufficient_quota") ||
-				strings.Contains(lowerBody, "out of credit") ||
-				strings.Contains(lowerBody, "payment required") ||
-				strings.Contains(lowerBody, "in_flight_budget_exhausted") ||
-				strings.Contains(lowerBody, "exceed your available credits")
+				lowerBody := strings.ToLower(bodyStr)
+				isInsufficientCredits := strings.Contains(lowerBody, "insufficient credit") ||
+					strings.Contains(lowerBody, "insufficient balance") ||
+					strings.Contains(lowerBody, "insufficient_quota") ||
+					strings.Contains(lowerBody, "out of credit")
 
-			if isInsufficientCredits {
+				if isInsufficientCredits {
 					markCustomCooldown(candidate, time.Hour)
 				} else if !isContextError {
 					markCooldown(candidate)
@@ -3991,20 +3981,6 @@ func selectCandidatesBase(ctx candidateContext) []string {
 			}
 		}
 		if isCurated {
-			candidates = append(candidates, ctx.originalModel)
-		}
-	}
-
-	// Tier 4.5: Original requested model (if Paid & allowPaid) — user has API key/credit for it
-	if ctx.originalModel != "" && !isOriginalFree && !ctx.isCooldown(ctx.originalModel) && ctx.allowPaid && !ctx.isExcluded(ctx.originalModel) {
-		already := false
-		for _, c := range candidates {
-			if c == ctx.originalModel {
-				already = true
-				break
-			}
-		}
-		if !already {
 			candidates = append(candidates, ctx.originalModel)
 		}
 	}

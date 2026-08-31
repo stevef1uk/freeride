@@ -1,0 +1,83 @@
+{
+  "engine": "freetoken",
+  "model": "Qwen3.6-35B-A3B-NVFP4",
+  "finished_at": "2026-08-23T22:48:04",
+  "tests": {
+    "t1_heredoc": {
+      "pass": false,
+      "checks": {
+        "cmd_prefix": true,
+        "quoted_heredoc": true,
+        "eof_terminator_line": false,
+        "both_headings": true,
+        "no_fences": true
+      },
+      "latency_s": 1.75,
+      "completion_tokens": 21,
+      "tok_per_s": 12.0,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "CMD:cat <<'EOF' > architecture.md\\n### go-module\\n\\n### core\\nEOF"
+    },
+    "t2_json_purity": {
+      "pass": true,
+      "checks": {
+        "pure_json": true,
+        "no_fences": true,
+        "no_cmd_lines": true
+      },
+      "latency_s": 1.58,
+      "completion_tokens": 13,
+      "tok_per_s": 8.2,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "{\"outcome\":\"success\",\"summary\":\"wrote main.py\"}"
+    },
+    "t3_write_marker": {
+      "pass": true,
+      "checks": {
+        "write_path_prefix": true,
+        "end_marker": true,
+        "fastapi_route": true,
+        "pong_body": true,
+        "no_fences": true
+      },
+      "latency_s": 2.67,
+      "completion_tokens": 82,
+      "tok_per_s": 30.7,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "WRITE: pingapp/main.py\nfrom fastapi import FastAPI\nimport uvicorn\n\napp = FastAPI()\n\n@app.get(\"/ping\")\ndef ping():\n    return {\"message\": \"pong\"}\n\nif __name__ == \"__main__\":\n    uvicorn.run(app, host=\"0.0.0.0\", port=8000)\n---END WRITE---"
+    },
+    "t4_edit_search": {
+      "pass": true,
+      "checks": {
+        "search_marker": true,
+        "divider": true,
+        "replace_marker": true,
+        "exact_old_line_in_search": true,
+        "new_line_in_replace": true
+      },
+      "latency_s": 1.97,
+      "completion_tokens": 42,
+      "tok_per_s": 21.3,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "EDIT: pingapp/main.py\n<<<<<<< SEARCH\ndef ping():\n    return {\"message\": \"pong\"}\n=======\ndef ping():\n    return {\"message\": \"pong-ok\"}\n>>>>>>> REPLACE"
+    },
+    "t5_long_context": {
+      "pass": true,
+      "checks": {
+        "port_7412": true,
+        "token_MT-9917": true,
+        "backup_0340": true
+      },
+      "latency_s": 1.69,
+      "completion_tokens": 20,
+      "tok_per_s": 11.8,
+      "reasoning_len": 0,
+      "finish": "stop",
+      "content_head": "7412, MT-9917, 03:40 UTC"
+    }
+  }
+}
