@@ -180,6 +180,7 @@ cerebrasPerformance:
 
 # Priority 0.6: Groq (Used for fast inference when Cerebras fails or is missing)
 groqBudget:
+  - "groq/qwen/qwen3.8-27b"                  # 27B dense, 262K context, $0.60/$3.60 per 1M — replaces qwen3.6-27b
 
 groqPerformance:
 
@@ -272,7 +273,7 @@ excludeModels:
   - "groq/canopylabs/orpheus-arabic-saudi"      # 0% success — requires terms acceptance
   - "groq/meta-llama/llama-prompt-guard-2-22m"  # 0% success — safety model, not chat
   - "groq/meta-llama/llama-prompt-guard-2-86m"  # 0% success — safety model, not chat
-  - "groq/qwen/qwen3.6-27b"                    # 0% success — rate limited
+  # Old groq exclusions removed — qwen3.6-27b deprecated, replaced by qwen3.8-27b
   - "mistralai/mistral-nemotron"                # 0% success
 
 # When local GPU is enabled (--allow-local-openai + localOpenAI below): skip weak cloud models;
