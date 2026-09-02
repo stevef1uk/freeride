@@ -1,9 +1,10 @@
 # Roles that must use "massive" models (70b+ heuristics in Go) — not model IDs.
+# Architect/Planner/QA need big models; polecat (code-writing) only needs capable, not massive.
 massiveOnlyRoles:
   - architect
   - mayor
   - planner
-  - polecat
+  - qa
 
 # Extra substring patterns that classify a model as "massive" — fully config-driven,
 # no hardcoded list in Go. Lets massiveOnlyRoles routes use curated flagships
