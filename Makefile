@@ -34,10 +34,19 @@ do_it_all: check-do-it-all-deps build
 	@bash scripts/wait-for-gt-stack.sh --freeride-only
 	@echo "Building gastown..."
 	@cd gastown && make install
-	@if [ -f "$${GT_ROOT:-$$HOME/gt}/mayor/town.json" ]; then \
-		echo "Gas Town HQ already initialized, skipping..."; \
+	@# GUARD: never create a town inside the freeride repo, even if GT_ROOT is polluted
+	@_gt_root="$${GT_ROOT:-$$HOME/gt}"; _freeride_root="$$(pwd)"; \
+	if [ "$$_gt_root" = "$$_freeride_root" ] || [ "$$_gt_root" = "$$_freeride_root/" ]; then \
+		echo "ERROR: GT_ROOT ($$_gt_root) == FREERIDE_ROOT ($$_freeride_root) — refusing to create town inside freeride. Unset GT_ROOT or set GT_ROOT=\$$HOME/gt and retry." >&2; \
+		exit 1; \
+	fi; \
+	case "$$_gt_root" in "$$_freeride_root"/*) \
+		echo "ERROR: GT_ROOT ($$_gt_root) is inside FREERIDE_ROOT ($$_freeride_root) — refusing." >&2; exit 1;; \
+	esac; \
+	if [ -f "$$_gt_root/mayor/town.json" ]; then \
+		echo "Gas Town HQ already initialized at $$_gt_root, skipping..."; \
 	else \
-		gt install $${GT_ROOT:-$$HOME/gt}; \
+		gt install "$$_gt_root"; \
 	fi
 	@if [ -f "scripts/freeride_proxy_performance.py" ]; then \
 		echo "Running performance script..."; \
