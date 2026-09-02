@@ -40,24 +40,25 @@ rolePrependBeforeOriginal:
   - tester
 
 rolePrepend:
-  # polecat: free prepend chain; on 429/cooldown falls through to paid entries.
+  # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
+  # so planner/architect/qa use better models instead of looping on minimax:free.
   polecat:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
+    - "minimax/minimax-m3:free"
     - "nvidia/nemotron-3-super-120b-a12b"
   planner:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
+    - "minimax/minimax-m3:free"
   architect:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
+    - "minimax/minimax-m3:free"
   tester:
-    - "minimax/minimax-m3:free"
     - "openai/gpt-5.6-luna"
-  qa:
     - "minimax/minimax-m3:free"
+  qa:
     - "openai/gpt-5.6-luna"
     - "google/gemini-3.5-flash"
+    - "minimax/minimax-m3:free"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
