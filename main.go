@@ -14,10 +14,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -159,6 +161,71 @@ func loadModelsConfig() {
 	if allowLocalOpenAI && len(globalModelsConfig.LocalOpenAI) > 0 {
 		log.Printf("[INFO] Local GPU mode: %d localOpenAI fallback endpoint(s); small-cloud block list active", len(globalModelsConfig.LocalOpenAI))
 	}
+}
+
+// modelsConfigReloadPoll is how often the background watcher checks models.yaml
+// for changes. Polling avoids pulling in a filesystem-notify dependency.
+const modelsConfigReloadPoll = 2 * time.Second
+
+// startModelsConfigWatcher watches models.yaml and hot-reloads it into
+// globalModelsConfig whenever the file changes. A SIGHUP also triggers an
+// immediate reload. Only config that loads cleanly is applied — a broken
+// models.yaml leaves the previously-good config in place (loadModelsConfig does
+// not reset globalModelsConfig on a parse failure).
+func startModelsConfigWatcher() {
+	path := "models.yaml"
+	var lastMod time.Time
+	if fi, err := os.Stat(path); err == nil {
+		lastMod = fi.ModTime()
+	}
+
+	reload := func(source string) {
+		before := configRevision()
+		loadModelsConfig()
+		after := configRevision()
+		if before != after {
+			log.Printf("[INFO] models.yaml hot-reloaded (%s): config changed", source)
+		}
+	}
+
+	// SIGHUP -> immediate reload (handy in scripts / service managers).
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP)
+	go func() {
+		for range sig {
+			log.Printf("[INFO] Received SIGHUP; reloading models.yaml")
+			reload("SIGHUP")
+		}
+	}()
+
+	go func() {
+		for {
+			time.Sleep(modelsConfigReloadPoll)
+			fi, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			if fi.ModTime().Equal(lastMod) {
+				continue
+			}
+			lastMod = fi.ModTime()
+			log.Printf("[INFO] models.yaml changed; hot-reloading")
+			reload("change")
+		}
+	}()
+}
+
+// configRevision returns a cheap fingerprint of the loaded config so the
+// watcher can tell whether a reload actually changed anything.
+func configRevision() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return fmt.Sprintf("%d:%d:%d:%d:%d",
+		len(globalModelsConfig.RolePrependBeforeOriginal),
+		len(globalModelsConfig.RolePrepend),
+		len(globalModelsConfig.GeminiModels),
+		len(globalModelsConfig.ReliableFree),
+		len(globalModelsConfig.CuratedPaid))
 }
 
 func localGPUEnabled() bool {
@@ -2807,6 +2874,7 @@ func main() {
 	loadCooldowns()
 
 	loadModelsConfig()
+	startModelsConfigWatcher()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if debugMode {

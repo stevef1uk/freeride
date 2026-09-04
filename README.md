@@ -196,6 +196,28 @@ See [Gas Town Integration — `make do_it_all` bootstrap](#make-do_it_all-bootst
 - `--allow-local-openai`: Enables `localOpenAI` fallback (after capable cloud) and applies `blockSmallCloudWhenLocalGPU` from `models.yaml`. **Disabled by default**. Does **not** force local over cloud — keep Gas Town `LLM_MODEL` on a strong cloud id (e.g. `meta/llama-3.3-70b-instruct`).
 - `--check-models`: Model doctor — verify every `models.yaml` id against live provider catalogs (OpenRouter, Groq, Cerebras, NVIDIA). See [Model Health Check](#model-health-check).
 
+### Hot-Reload
+
+Freeride watches `models.yaml` for changes and reloads the config automatically — no restart required. A background poller checks file modification time every 2 seconds; when it detects a change, it re-reads and re-parses the file. Only cleanly-parsed configs are applied — a broken `models.yaml` leaves the previous working config in place.
+
+**Manual reload:** Send `SIGHUP` to the Freeride process to trigger an immediate reload:
+```bash
+kill -HUP $(pgrep -x freeride)
+```
+
+**What reloads without restart:**
+- `rolePrepend` / `rolePrependBeforeOriginal` (role fallback chains)
+- `reliableFree`, `curatedPaid`, `nvidiaReliable` (model pools)
+- `geminiModels` (direct Gemini routing)
+- `excludeModels`, `modelClassification` (exclusions and heuristics)
+- `localOpenAI`, `ideModels`, `blockSmallCloudWhenLocalGPU`
+- `freeModelScoreBoost`, `compatModels`
+
+**What requires a restart:**
+- CLI flags (`--allow-paid`, `--debug`, etc.)
+- `.env` API key changes (env vars are set once at startup)
+- Port (`PORT` env var)
+
 ---
 
 ## Google Gemini API (direct)

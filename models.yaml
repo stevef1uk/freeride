@@ -38,6 +38,7 @@ rolePrependBeforeOriginal:
   - qa
   - polecat
   - tester
+  - setup
 
 rolePrepend:
   # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
@@ -59,6 +60,10 @@ rolePrepend:
     - "openai/gpt-5.6-luna"
     - "google/gemini-3.5-flash"
     - "minimax/minimax-m3:free"
+  setup:
+    - "openai/gpt-5.6-luna"
+    - "minimax/minimax-m3:free"
+    - "deepseek/deepseek-v4-flash"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
