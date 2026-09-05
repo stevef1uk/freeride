@@ -47,23 +47,29 @@ rolePrepend:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
     - "nvidia/nemotron-3-super-120b-a12b"
+    - "cloudflare/llama-3.3-70b"
   planner:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
+    - "cloudflare/llama-3.3-70b"
   architect:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
+    - "cloudflare/qwen-2.5-coder-32b"
   tester:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
+    - "cloudflare/llama-3.3-70b"
   qa:
     - "openai/gpt-5.6-luna"
     - "google/gemini-3.5-flash"
     - "minimax/minimax-m3:free"
+    - "cloudflare/qwen-2.5-coder-32b"
   setup:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
     - "deepseek/deepseek-v4-flash"
+    - "cloudflare/llama-3.3-70b"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
@@ -205,6 +211,15 @@ nvidiaReliable:
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
   - "nvidia/nemotron-3-super-120b-a12b"
+
+# Cloudflare Workers AI models — free inference via Workers AI
+# Requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env vars set
+# Model format: id: "cloudflare/@cf/model-name", model: "@cf/org/model-name"
+cloudflareModels:
+  - id: "cloudflare/llama-3.3-70b"
+    model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  - id: "cloudflare/qwen-2.5-coder-32b"
+    model: "@cf/qwen/qwen2.5-coder-32b-instruct"
 
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:

@@ -1,13 +1,15 @@
-# Freeride Proxy (v1.3.0)
+# Freeride Proxy (v1.4.0)
 
-A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **Google Gemini API**, **Cerebras**, **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
+A stand-alone, Ollama-compatible proxy that dynamically fetches and serves free models from **Google Gemini API**, **Cloudflare Workers AI**, **Cerebras**, **OpenRouter**, **NVIDIA (NIM)**, and **Ollama Cloud**. Runs locally on port `:11434`, intercepting requests to the OpenAI-compatible endpoint (`/v1/chat/completions`) and the Ollama native model listing endpoint (`/api/tags`).
 
 Use it **standalone** with any OpenAI-compatible client, or as the LLM backend for [Gas Town](https://github.com/gastownhall/gastown) multi-agent orchestration.
 
 ---
 
-## What's New (v1.3.0)
+## What's New (v1.4.0)
 
+- **Cloudflare Workers AI (direct)**: Free-tier models (Llama 3.3 70B, Qwen 2.5 Coder 32B) via `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` — no OpenRouter markup. Added to `cloudflareModels` in `models.yaml`.
+- **Paid model fallback**: When all free models (including Cloudflare, Gemini, NVIDIA) are in cooldown and `--allow-paid` is set, the proxy falls back to paid models instead of returning 503.
 - **Cloud-first local GPU**: With `--allow-local-openai`, capable cloud models (70B NVIDIA, OpenRouter free tiers, large Cerebras, etc.) are tried first; `localOpenAI` (llama-server on `:8080`) is **last-resort fallback** only when cloud routes fail or are in cooldown.
 - **Weak-cloud blocking**: `blockSmallCloudWhenLocalGPU` in `models.yaml` skips nano/mini/8B cloud models when local GPU mode is on — so fallback does not mean “downgrade to 8B.”
 - **Config-only model IDs**: Routing lists, role prepends, compat model stubs, score boosts, and model-name classification heuristics live in `models.yaml` — not hardcoded in Go.
@@ -24,10 +26,11 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
 2. **Gemini API direct** (`geminiModels` in `models.yaml`, requires `GEMINI_API_KEY`)
 3. **Groq API direct** (`groqBudget` / `groqPerformance` in `models.yaml`, requires `GROQ_API_KEY`)
 4. Role prepends (`rolePrepend`, when `--allow-paid`) — tried **before** the role's `originalModel` for roles in `rolePrependBeforeOriginal` (default `architect`, `planner`, `qa`); for other roles (e.g. `polecat`) the `originalModel` stays first and prepends are fallback
-5. Reliable free + NVIDIA lists, Ollama cloud, original model
-6. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
-7. IDE bridges (`--allow-ide`)
-8. **Local llama-server** (`localOpenAI`, `--allow-local-openai`) — **after** capable cloud
+5. **Cloudflare Workers AI direct** (`cloudflareModels` in `models.yaml`, requires `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`)
+6. Reliable free + NVIDIA lists, Ollama cloud, original model
+7. Curated paid (`curatedPaid`, when `--allow-paid` + complex)
+8. IDE bridges (`--allow-ide`)
+9. **Local llama-server** (`localOpenAI`, `--allow-local-openai`) — **after** capable cloud
 
 ---
 
@@ -37,6 +40,7 @@ Earlier (v1.2.0): headless `gt-agent`, NATS transport, Proxy-Magic tool extracti
 - A **Cerebras API key** (Optional, for fastest inference)
 - A **Groq API key** (Optional, for fast inference fallback)
 - A **Gemini API key** (optional, for free Google Flash models via `geminiModels` in `models.yaml`)
+- A **Cloudflare API token** (optional, for free Workers AI models via `cloudflareModels` in `models.yaml`)
 - An **OpenRouter API key** (for free OpenRouter models)
 - An **NVIDIA API key** (for highest-performance free NIM models)
 - An **Ollama API key** (for Ollama Cloud models like Qwen3 480B and DeepSeek V4)
@@ -167,6 +171,8 @@ See [Gas Town Integration — `make do_it_all` bootstrap](#make-do_it_all-bootst
    OLLAMA_API_KEY=1b18...
    CEREBRAS_API_KEY=csk-...
    GROQ_API_KEY=gsk_...
+   CLOUDFLARE_ACCOUNT_ID=...   # from https://dash.cloudflare.com
+   CLOUDFLARE_API_TOKEN=...    # from https://dash.cloudflare.com/profile/api-tokens
    ```
    On startup, Freeride reads `.env` from the **current working directory** (`KEY=value` lines; `#` comments are ignored). You can use shell exports instead if you prefer.
 
@@ -317,6 +323,105 @@ Only ids listed under `geminiModels` use the direct API. Other `google/*` reques
 - **Thinking models**: `gemini-3.5-flash` may use internal reasoning tokens; use adequate `max_tokens` for short replies in tests.
 - **Tools**: Gemini supports tool-style requests; Freeride does not apply NVIDIA-style `tool_choice` stripping to direct Gemini routes.
 - **Discovery**: When the key is set, `google/gemini-*` ids appear on `/v1/models` and `/api/tags` with `owned_by: google-gemini`.
+
+---
+
+## Cloudflare Workers AI (direct)
+
+Freeride can call **Cloudflare Workers AI** directly using its [OpenAI-compatible endpoint](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). This provides free inference for capable open-source models (Llama 3.3, Qwen 2.5, etc.) at zero token cost — separate from OpenRouter's paid tiers.
+
+### Setup
+
+1. Create a Cloudflare account at [dash.cloudflare.com](https://dash.cloudflare.com).
+2. Create an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) with **Workers AI:Read** permission.
+3. Add to Freeride's `.env` (repo root, same directory you start `./freeride` from):
+
+   ```env
+   CLOUDFLARE_ACCOUNT_ID=your-account-id
+   CLOUDFLARE_API_TOKEN=your-api-token
+   ```
+
+4. Ensure `cloudflareModels` in `models.yaml` lists the routes you want (defaults ship in-repo):
+
+   ```yaml
+   cloudflareModels:
+     - id: "cloudflare/llama-3.3-70b"           # Freeride / client model name
+       model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"  # exact name sent to Cloudflare
+     - id: "cloudflare/qwen-2.5-coder-32b"
+       model: "@cf/qwen/qwen2.5-coder-32b-instruct"
+   ```
+
+5. Add Cloudflare models to `rolePrepend` in `models.yaml` (optional, for explicit routing):
+
+   ```yaml
+   rolePrepend:
+     polecat:
+       - "cloudflare/llama-3.3-70b"
+     architect:
+       - "cloudflare/qwen-2.5-coder-32b"
+   ```
+
+6. Restart Freeride. On startup you should see: `Loaded ... Cloudflare direct models`.
+
+If credentials are missing or invalid, Cloudflare routes are skipped (other providers still work).
+
+### How routing works
+
+| Concept | Value |
+|--------|--------|
+| Client / Gas Town model id | `cloudflare/llama-3.3-70b` (from `cloudflareModels[].id`) |
+| Upstream API model | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (from `cloudflareModels[].model`) |
+| Upstream URL | `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions` |
+| Candidate tier | **Tier 0** — direct model (like Gemini), tried before OpenRouter/NVIDIA fallbacks |
+| Treated as "free" | Yes (Cloudflare Workers AI free tier; no token cost) |
+
+Freeride tries candidates in order; the first non-cooldown upstream success wins. If the client requests `cloudflare/llama-3.3-70b`, that id is tried early (Tier 0 when configured and not in cooldown).
+
+**Paid fallback**: When all free models (including Cloudflare) are in cooldown and `--allow-paid` is set, the proxy falls back to paid models instead of returning 503.
+
+### Verify the key
+
+```bash
+curl -s http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "cloudflare/llama-3.3-70b",
+    "messages": [{"role": "user", "content": "Say CLOUDFLARE_OK"}],
+    "max_tokens": 32
+  }'
+```
+
+Expect a response with model `cloudflare/llama-3.3-70b` (or a fallback model if Cloudflare is in cooldown). A `401` means the API token is invalid or missing Workers AI permission.
+
+Direct curl (replace credentials):
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/v1/chat/completions" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"@cf/meta/llama-3.3-70b-instruct-fp8-fast","messages":[{"role":"user","content":"Say CLOUDFLARE_OK"}],"max_tokens":32}'
+```
+
+### Adding or changing models
+
+Edit `models.yaml` only — no Go changes required:
+
+```yaml
+cloudflareModels:
+  - id: "cloudflare/llama-3.3-70b"
+    model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  - id: "cloudflare/qwen-2.5-coder-32b"
+    model: "@cf/qwen/qwen2.5-coder-32b-instruct"
+    cooldown: "30s"  # optional per-model cooldown override
+```
+
+Use model ids from [Cloudflare Workers AI models](https://developers.cloudflare.com/workers-ai/models/). Not every id works on every account; test with a direct curl before relying on a route.
+
+### Notes
+
+- **Free tier**: Cloudflare Workers AI has a generous free tier; see [pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/).
+- **Tools**: Cloudflare supports tool-style requests; Freeride forwards tool parameters as-is.
+- **Discovery**: When configured, `cloudflare/*` ids appear on `/v1/models` and `/api/tags` with `owned_by: cloudflare`.
 
 ---
 

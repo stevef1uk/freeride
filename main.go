@@ -124,6 +124,7 @@ type modelsConfig struct {
 	DefaultResponseModel        string                            `yaml:"defaultResponseModel"`
 	AnthropicResponseModel      string                            `yaml:"anthropicResponseModel"`
 	ModelClassification         modelClassificationConfig         `yaml:"modelClassification"`
+	CloudflareModels            []cloudflareModel                 `yaml:"cloudflareModels"`
 }
 
 var (
@@ -422,6 +423,71 @@ func localContextSlots(configured int) int {
 		return configured
 	}
 	return 16384
+}
+
+// selectPaidCandidates attempts to select paid model candidates when all free models
+// are in cooldown and --allow-paid is set. It prioritizes NVIDIA tool-capable models,
+// then falls back to other configured paid models.
+func selectPaidCandidates(ctx candidateContext, originalModel string) []string {
+	var candidates []string
+
+	// Tier 1: NVIDIA tool-capable models (always free, don't require credits)
+	for _, nid := range ctx.conf.NvidiaReliable {
+		if nid == "" || ctx.isCooldown(nid) || ctx.isExcluded(nid) {
+			continue
+		}
+		if !candidateListContains(candidates, nid) {
+			candidates = append(candidates, nid)
+			log.Printf("[DEBUG] Paid fallback: using NVIDIA model: %s", nid)
+			break
+		}
+	}
+
+	// Tier 2: Curated paid models from config
+	if len(candidates) == 0 && len(ctx.conf.CuratedPaid) > 0 {
+		for _, pm := range ctx.conf.CuratedPaid {
+			if pm == "" || ctx.isCooldown(pm) || ctx.isExcluded(pm) {
+				continue
+			}
+			if !candidateListContains(candidates, pm) {
+				candidates = append(candidates, pm)
+				log.Printf("[DEBUG] Paid fallback: using curated paid model: %s", pm)
+				break
+			}
+		}
+	}
+
+	// Tier 3: Cloudflare Workers AI models (if configured and enabled)
+	if len(candidates) == 0 && cloudflareDirectAvailable() {
+		for _, cfm := range ctx.conf.CloudflareModels {
+			if cfm.ID == "" || ctx.isCooldown(cfm.ID) || ctx.isExcluded(cfm.ID) {
+				continue
+			}
+			if !candidateListContains(candidates, cfm.ID) {
+				candidates = append(candidates, cfm.ID)
+				log.Printf("[DEBUG] Paid fallback: using Cloudflare model: %s", cfm.ID)
+				break
+			}
+		}
+	}
+
+	// Tier 4: Gemini API direct models (if configured)
+	if len(candidates) == 0 && geminiDirectAvailable() {
+		for _, gm := range ctx.conf.GeminiModels {
+			if gm.ID == "" {
+				continue
+			}
+			if !ctx.isCooldown(gm.ID) && !ctx.isExcluded(gm.ID) {
+				if !candidateListContains(candidates, gm.ID) {
+					candidates = append(candidates, gm.ID)
+					log.Printf("[DEBUG] Paid fallback: using Gemini direct model: %s", gm.ID)
+					break
+				}
+			}
+		}
+	}
+
+	return candidates
 }
 
 // estimatePromptTokens is a conservative upper bound for context budgeting.
@@ -1558,13 +1624,29 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[DEBUG] using local OpenAI fallback candidates: %v", candidates)
 			}
 		}
-		if len(candidates) == 0 {
+if len(candidates) == 0 {
+		if allowPaid {
+			log.Printf("[DEBUG] All free models in cooldown, attempting paid fallback for role=%s", ctx.role)
+			// Try to select paid model candidates when allowPaid is set
+			paidCandidates := selectPaidCandidates(ctx, originalModel)
+			if len(paidCandidates) > 0 {
+				candidates = paidCandidates
+				log.Printf("[DEBUG] Paid fallback candidates selected: %v", candidates)
+			} else {
+				log.Printf("[DEBUG] No paid candidates available, returning overloaded error")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All models currently unavailable. Please try again later."}}`))
+				return
+			}
+		} else {
 			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
 			return
 		}
+	}
 	}
 
 	log.Printf("[DEBUG] Final Candidates: %v", candidates)
@@ -1590,8 +1672,12 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		isIDE := false
 		var localOpenAI *localOpenAIModel
 		var geminiDirect *geminiModel
+		var cloudflareDirect *cloudflareModel
 		if gm := lookupGeminiModel(candidate); gm != nil && geminiDirectAvailable() {
 			geminiDirect = gm
+		}
+		if cm := lookupCloudflareModel(candidate); cm != nil && cloudflareDirectAvailable() {
+			cloudflareDirect = cm
 		}
 		for _, m := range conf.IdeModels {
 			if m.ID == candidate {
@@ -1623,8 +1709,12 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			targetURL = geminiOpenAIBaseURL + "/chat/completions"
 			apiKey = resolveGeminiAPIKey()
 		}
+		if !isIDE && localOpenAI == nil && geminiDirect == nil && cloudflareDirect != nil {
+			targetURL = cloudflareBaseURL() + "/chat/completions"
+			apiKey = resolveCloudflareAPIToken()
+		}
 
-		directOpenAIEndpoint := isIDE || localOpenAI != nil || geminiDirect != nil
+		directOpenAIEndpoint := isIDE || localOpenAI != nil || geminiDirect != nil || cloudflareDirect != nil
 
 		if directOpenAIEndpoint {
 			// targetURL and apiKey set above for IDE / localOpenAI / Gemini direct
@@ -1695,6 +1785,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			if geminiDirect != nil {
 				currentBody["model"] = geminiAPIModelName(geminiDirect, candidate)
+			}
+			if cloudflareDirect != nil {
+				currentBody["model"] = cloudflareAPIModelName(cloudflareDirect, candidate)
 			}
 			sanitizeBody(currentBody)
 			if localOpenAI != nil {
@@ -2505,6 +2598,26 @@ func proxyModels(w http.ResponseWriter, r *http.Request) {
 				DisplayName: dn,
 				Created:     time.Now().Unix(),
 				OwnedBy:     "google-gemini",
+			})
+		}
+	}
+	// Add Cloudflare Workers AI models
+	if cloudflareDirectAvailable() {
+		for _, m := range globalModelsConfig.CloudflareModels {
+			if m.ID == "" {
+				continue
+			}
+			dn := m.Model
+			if dn == "" {
+				dn = m.ID
+			}
+			res.Data = append(res.Data, openAIModel{
+				ID:          m.ID,
+				Type:        "model",
+				Object:      "model",
+				DisplayName: dn,
+				Created:     time.Now().Unix(),
+				OwnedBy:     "cloudflare",
 			})
 		}
 	}
@@ -3526,6 +3639,7 @@ func localOpenAIModelConfigured(modelID string, conf modelsConfig) bool {
 	return false
 }
 
+// cloudflareDirectEnabledFor checks if Cloudflare Workers AI is configured and enabled.
 func candidateListContains(candidates []string, id string) bool {
 	for _, c := range candidates {
 		if c == id {
@@ -3730,11 +3844,17 @@ func selectCandidatesBase(ctx candidateContext) []string {
 			}
 		} else if strings.HasPrefix(om, "google/") && geminiDirectEnabledFor(ctx.conf) && lookupGeminiModel(ctx.originalModel) != nil {
 			candidates = append(candidates, ctx.originalModel)
+		} else if strings.HasPrefix(om, "cloudflare/") && cloudflareDirectEnabledFor(ctx.conf) && lookupCloudflareModel(ctx.originalModel) != nil {
+			candidates = append(candidates, ctx.originalModel)
+			log.Printf("[DEBUG] Tier0 APPEND: adding Cloudflare direct model %s", ctx.originalModel)
 		}
 	} else if ctx.originalModel != "" && !ctx.isCooldown(ctx.originalModel) && !ctx.isExcluded(ctx.originalModel) {
 		om := strings.ToLower(ctx.originalModel)
 		if strings.HasPrefix(om, "cerebras/") && !candidateListContains(candidates, ctx.originalModel) {
 			candidates = append(candidates, ctx.originalModel)
+		} else if strings.HasPrefix(om, "cloudflare/") && cloudflareDirectEnabledFor(ctx.conf) && lookupCloudflareModel(ctx.originalModel) != nil && !candidateListContains(candidates, ctx.originalModel) {
+			candidates = append(candidates, ctx.originalModel)
+			log.Printf("[DEBUG] Tier0 APPEND: adding Cloudflare direct model %s (no role)", ctx.originalModel)
 		}
 	}
 
