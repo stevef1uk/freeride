@@ -28,6 +28,10 @@ massiveModelPatterns:
   - "gemini"
   - "opus"
   - "deepseek-v4"
+  - "nemotron-3.5-lightning"
+  - "nemotron-3-ultra"
+  - "inkling"
+  - "north-mini-code"
 
 # Extra candidates prepended for a role when --allow-paid (e.g. polecat coding)
 # Roles in rolePrependBeforeOriginal try these BEFORE their originalModel; other
@@ -46,37 +50,60 @@ rolePrepend:
   polecat:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
-    - "nvidia/nemotron-3-super-120b-a12b"
+    - "nvidia/nemotron-3.5-lightning:free"
+    - "nvidia/nemotron-3-super-120b-a12b:free"
+    - "cohere/north-mini-code:free"
     - "cloudflare/llama-3.3-70b"
   planner:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
+    - "nvidia/nemotron-3.5-lightning:free"
+    - "nvidia/nemotron-3-ultra-550b-a55b:free"
     - "cloudflare/llama-3.3-70b"
   architect:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
+    - "nvidia/nemotron-3-ultra-550b-a55b:free"
+    - "nvidia/nemotron-3.5-lightning:free"
     - "cloudflare/qwen-2.5-coder-32b"
   tester:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
+    - "nvidia/nemotron-3.5-lightning:free"
+    - "thinkingmachines/inkling:free"
     - "cloudflare/llama-3.3-70b"
   qa:
     - "openai/gpt-5.6-luna"
     - "google/gemini-3.5-flash"
+    - "nvidia/nemotron-3-ultra-550b-a55b:free"
     - "minimax/minimax-m3:free"
+    - "nvidia/nemotron-3.5-lightning:free"
     - "cloudflare/qwen-2.5-coder-32b"
   setup:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3:free"
     - "deepseek/deepseek-v4-flash"
+    - "nvidia/nemotron-3.5-lightning:free"
     - "cloudflare/llama-3.3-70b"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
 freeModelScoreBoost:
   - pattern: "minimax-m3"
     boost: 10.0
+  - pattern: "nemotron-3.5-lightning"
+    boost: 9.0
+  - pattern: "nemotron-3-ultra"
+    boost: 8.5
   - pattern: "gemini-3.5-flash"
     boost: 8.0
+  - pattern: "nemotron-3-super"
+    boost: 7.0
+  - pattern: "north-mini-code"
+    boost: 6.0
+  - pattern: "inkling"
+    boost: 5.0
+  - pattern: "minimax-m2.7"
+    boost: 4.5
   - pattern: "gemini-2.5-flash-lite"
     boost: 4.0
 
@@ -199,6 +226,12 @@ groqPerformance:
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
   - "minimax/minimax-m3:free"
+  - "nvidia/nemotron-3.5-lightning:free"
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"
+  - "nvidia/nemotron-3-super-120b-a12b:free"
+  - "cohere/north-mini-code:free"
+  - "thinkingmachines/inkling:free"
+  - "minimax/minimax-m2.7:free"
   - "dots-studio/dots-3-note-preview:free"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)

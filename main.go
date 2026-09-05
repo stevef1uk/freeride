@@ -324,6 +324,23 @@ func matchesAnyMarker(lower string, markers []string) bool {
 	return false
 }
 
+// isNvidiaNIMModel reports whether a model ID should be routed to the NVIDIA
+// NIM API (integrate.api.nvidia.com). Models with a :free suffix are always
+// routed via OpenRouter instead, even if they carry an nvidia/ prefix.
+func isNvidiaNIMModel(model string) bool {
+	if strings.HasSuffix(model, ":free") {
+		return false
+	}
+	return strings.HasPrefix(model, "nvidia/") ||
+		strings.HasPrefix(model, "meta/") ||
+		strings.HasPrefix(model, "mistralai/") ||
+		strings.HasPrefix(model, "microsoft/") ||
+		strings.HasPrefix(model, "qwen/") ||
+		strings.HasPrefix(model, "abacusai/") ||
+		strings.HasPrefix(model, "ai21labs/") ||
+		strings.HasPrefix(model, "01-ai/")
+}
+
 func roleRequiresMassiveModel(role string) bool {
 	configMutex.RLock()
 	roles := globalModelsConfig.MassiveOnlyRoles
@@ -1656,14 +1673,7 @@ if len(candidates) == 0 {
 		var targetURL string
 		var apiKey string
 
-		isNvidia := strings.HasPrefix(candidate, "nvidia/") ||
-			strings.HasPrefix(candidate, "meta/") ||
-			strings.HasPrefix(candidate, "mistralai/") ||
-			strings.HasPrefix(candidate, "microsoft/") ||
-			strings.HasPrefix(candidate, "qwen/") ||
-			strings.HasPrefix(candidate, "abacusai/") ||
-			strings.HasPrefix(candidate, "ai21labs/") ||
-			strings.HasPrefix(candidate, "01-ai/")
+		isNvidia := isNvidiaNIMModel(candidate)
 
 		isOllama := strings.HasPrefix(candidate, "ollama/")
 		isCerebras := strings.HasPrefix(candidate, "cerebras/")
@@ -2878,15 +2888,7 @@ func sanitizeBody(body map[string]interface{}) {
 	// 6. NVIDIA/Mistral Specific: Strip 'tool_choice' if it's "auto" (avoids 400 errors)
 	// and strip 'parallel_tool_calls' which NVIDIA NIM doesn't support yet for all models
 	model, _ := body["model"].(string)
-	isNvidiaModel := strings.HasPrefix(model, "nvidia/") ||
-		strings.HasPrefix(model, "meta/") ||
-		strings.HasPrefix(model, "mistralai/") ||
-		strings.HasPrefix(model, "microsoft/") ||
-		strings.HasPrefix(model, "qwen/") ||
-		strings.HasPrefix(model, "abacusai/") ||
-		strings.HasPrefix(model, "ai21labs/") ||
-		strings.HasPrefix(model, "01-ai/") ||
-		strings.HasPrefix(model, "deepseek/")
+	isNvidiaModel := isNvidiaNIMModel(model) || strings.HasPrefix(model, "deepseek/")
 
 	log.Printf("[DEBUG] sanitizeBody: model=%q isNvidia=%v tool_choice=%v", model, isNvidiaModel, body["tool_choice"])
 	if isNvidiaModel {
