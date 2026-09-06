@@ -2485,6 +2485,22 @@ func selectCandidatesBase(ctx candidateContext) []string {
 		}
 	}
 
+	// Tier 0.16: Cloudflare Workers AI free tier (requires CLOUDFLARE_ACCOUNT_ID + API token).
+	// Cloudflare is a free provider — always available as a fallback, independent of allowPaid.
+	if cloudflareDirectEnabledFor(ctx.conf) {
+		for _, cfm := range ctx.conf.CloudflareModels {
+			if cfm.ID == "" {
+				continue
+			}
+			if !ctx.isCooldown(cfm.ID) && !ctx.isExcluded(cfm.ID) {
+				if !candidateListContains(candidates, cfm.ID) {
+					candidates = append(candidates, cfm.ID)
+					log.Printf("[DEBUG] Tier0.16: adding Cloudflare free model %s", cfm.ID)
+				}
+			}
+		}
+	}
+
 	// Tier 0.4: Dynamic Cerebras (non-massive / simple only; massive handled in tier 0.05).
 	for _, m := range ctx.cerebrasModels {
 		modelName := "cerebras/" + m.ID
