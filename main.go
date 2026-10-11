@@ -1572,6 +1572,7 @@ func main() {
 	flag.BoolVar(&allowPaid, "allow-paid", false, "Allow using paid models for complex requests or as fallback")
 	flag.BoolVar(&allowIDE, "allow-ide", false, "Allow using local IDE models as fallback")
 	flag.BoolVar(&allowLocalOpenAI, "allow-local-openai", false, "Enable localOpenAI fallback (after capable cloud) and blockSmallCloudWhenLocalGPU")
+	port := flag.String("port", "", "Port to listen on (default: PORT env var or 11434)")
 	checkModels := flag.Bool("check-models", false, "Verify every models.yaml model against live provider catalogs (OpenRouter/Groq/Cerebras/NVIDIA) and report retired/missing ids")
 	applyModels := flag.Bool("apply-models", false, "With -check-models: back up models.yaml, propose replacements for missing models, ask for approval")
 	probeModels := flag.Bool("probe-models", false, "With -check-models: also send a tiny chat ping per model to catch announced retirements still listed in catalogs")
@@ -1622,13 +1623,16 @@ func main() {
 		}
 	})
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "11434"
+	portStr := *port
+	if portStr == "" {
+		portStr = os.Getenv("PORT")
+	}
+	if portStr == "" {
+		portStr = "11434"
 	}
 
-	log.Printf("Proxy starting on :%s (allowPaid=%v, allowLocalOpenAI=%v, allowIDE=%v)", port, allowPaid, allowLocalOpenAI, allowIDE)
-	if err := http.ListenAndServe(":"+port, handler); err != nil {
+	log.Printf("Proxy starting on :%s (allowPaid=%v, allowLocalOpenAI=%v, allowIDE=%v)", portStr, allowPaid, allowLocalOpenAI, allowIDE)
+	if err := http.ListenAndServe(":"+portStr, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
