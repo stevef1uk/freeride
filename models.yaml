@@ -180,6 +180,10 @@ geminiModels:
     model: "gemini-3.5-flash"
   - id: "google/gemini-2.5-flash-lite"
     model: "gemini-2.5-flash-lite"
+  - id: "google/gemma-4-26b-a4b-it"
+    model: "gemma-4-26b-a4b-it"
+  - id: "google/gemma-4-31b-it"
+    model: "gemma-4-31b-it"
 
 # Cerebras: Freeride tries massive budget/performance Cerebras before NVIDIA/meta when size allows.
 # Small entries (8b) are blocked for polecat when local GPU is on (blockSmallCloudWhenLocalGPU).
@@ -200,17 +204,41 @@ groqPerformance:
 reliableFree:
   - "minimax/minimax-m3:free"
   - "dots-studio/dots-3-note-preview:free"
+  - "qwen/qwen3-coder:free"
+  - "deepseek/deepseek-v4-flash:free"
+  - "deepseek/deepseek-v4.1-flash:free"
+  - "z-ai/glm-4.5-air:free"
+  - "qwen/qwen3.8-27b"
+  - "google/gemma-4-26b-a4b-it"
+  - "google/gemma-4-31b-it"
+  - "nvidia/nemotron-3.5-lightning"
+  - "nvidia/nemotron-3-super-120b-a12b:free"
+  - "poolside/laguna-s-2.1"
+  - "poolside/laguna-xs-2.1"
+  - "cohere/north-mini-code"
+  - "thinkingmachines/inkling"
+  - "thinkingmachines/inkling-small"
+  - "openrouter/free"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
 # 70b/nemotron-super for agents; 11b for lighter tasks.
 nvidiaReliable:
   - "nvidia/nemotron-3-super-120b-a12b"
+  - "nvidia/nemotron-3-super-120b-a12b:free"
+  - "nvidia/nemotron-3.5-lightning"
+  - "nvidia/nemotron-3-ultra-550b-a55b"
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"
+  - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
   - "meta/llama-3.2-11b-vision-instruct"
 
 # Priority 2.5: Complex-task NVIDIA models (always tried first for complex requests)
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
   - "nvidia/nemotron-3-super-120b-a12b"
+  - "nvidia/nemotron-3-super-120b-a12b:free"
+  - "nvidia/nemotron-3-ultra-550b-a55b"
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"
+  - "nvidia/nemotron-3.5-lightning"
 
 # Cloudflare Workers AI models — free inference via Workers AI (no allow-paid needed)
 # Requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env vars set
@@ -219,6 +247,29 @@ cloudflareModels:
     model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
   - id: "cloudflare/qwen-2.5-coder-32b"
     model: "@cf/qwen/qwen2.5-coder-32b-instruct"
+  - id: "cloudflare/llama-3.3-70b-instruct"
+    model: "@cf/meta/llama-3.3-70b-instruct"
+
+# Z.ai models — free inference via Z.ai (requires ZAI_API_KEY env var set)
+zaiModels:
+  - id: "z-ai/glm-5.2"
+    model: "glm-5.2"
+  - id: "z-ai/glm-4.5-air:free"
+    model: "glm-4.5-air"
+  - id: "z-ai/glm-5.2-flash"
+    model: "glm-5.2-flash"
+
+# Thinking Machines models — open-weight multimodal MoE (free tier)
+thinkingMachinesModels:
+  - id: "thinkingmachines/inkling"
+    model: "inkling"
+  - id: "thinkingmachines/inkling-small"
+    model: "inkling-small"
+
+# OpenRouter Free Router — auto-selects free models
+openrouterFreeRouter:
+  - id: "openrouter/free"
+    model: "openrouter/free"
 
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
