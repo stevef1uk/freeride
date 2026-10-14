@@ -624,6 +624,61 @@ if len(candidates) == 0 {
 	w.Write([]byte(`{"error": {"message": "No models available in the Freeride proxy. Please check your API keys.", "type": "unavailable"}}`))
 }
 
+// reasoningActionMarkers are agent action prefixes (Gas Town / opencode) that a
+// reasoning model may emit into its reasoning channel instead of content. Seen
+// with OpenAI gpt-oss Harmony models on Groq: the final plan/action lands in the
+// `reasoning` field and `content` is empty, so downstream agents see nothing.
+var reasoningActionMarkers = []string{"CMD:", "WRITE:", "EDIT:", "READ:"}
+
+// promoteReasoningContent copies the trailing action block out of a model's
+// reasoning channel into content when content is empty, so the downstream agent
+// parser can still act on it. Returns true when the message was modified.
+func promoteReasoningContent(message map[string]interface{}) bool {
+	if content, _ := message["content"].(string); strings.TrimSpace(content) != "" {
+		return false
+	}
+
+	reasoning := ""
+	for _, key := range []string{"reasoning", "reasoning_content"} {
+		if s, ok := message[key].(string); ok && strings.TrimSpace(s) != "" {
+			reasoning = s
+			break
+		}
+	}
+	if reasoning == "" {
+		return false
+	}
+
+	idx := -1
+	for _, marker := range reasoningActionMarkers {
+		if i := strings.LastIndex(reasoning, marker); i > idx {
+			idx = i
+		}
+	}
+	// Fall back to a final JSON outcome object some roles end with.
+	if idx < 0 {
+		if i := strings.LastIndex(reasoning, `{"outcome"`); i >= 0 {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+
+	// Rewind to the start of the line so a multi-line action payload
+	// (e.g. a WRITE/EDIT block) is preserved.
+	if lineStart := strings.LastIndex(reasoning[:idx], "\n"); lineStart >= 0 {
+		idx = lineStart + 1
+	}
+
+	promoted := strings.TrimSpace(reasoning[idx:])
+	if promoted == "" {
+		return false
+	}
+	message["content"] = promoted
+	return true
+}
+
 func translateResponse(body []byte, overrideModel string) []byte {
 	var resp map[string]interface{}
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -647,6 +702,11 @@ func translateResponse(body []byte, overrideModel string) []byte {
 	message, ok := choice["message"].(map[string]interface{})
 	if !ok {
 		return body
+	}
+
+	promoted := promoteReasoningContent(message)
+	if promoted {
+		log.Printf("[TRANS] content was empty; promoted reasoning-channel action into content")
 	}
 
 	content, ok := message["content"].(string)
@@ -724,6 +784,11 @@ func translateResponse(body []byte, overrideModel string) []byte {
 	}
 
 	if len(toolCalls) == 0 {
+		if promoted {
+			if newBody, err := json.Marshal(resp); err == nil {
+				return newBody
+			}
+		}
 		return body
 	}
 
