@@ -299,6 +299,7 @@ excludeModels:
   # NVIDIA NIM non-chat / failing models (observed in live stats)
   - "nvidia/nemotron-4-340b-reward"        # reward model, not a chat model
   - "nvidia/nemotron-parse"                # parse-only model
+  - "nvidia/nemotron-parse-2.0"            # parse-only model — 400 context-length errors, too weak
   - "nvidia/nemotron-4-340b-instruct"      # failing on agent tasks
   - "nvidia/nemotron-nano-3-30b-a3b"       # empty-content responses
   - "nvidia/nvidia-nemotron-nano-9b-v2"    # ~45% flaky nano
