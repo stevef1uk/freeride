@@ -401,6 +401,11 @@ if len(candidates) == 0 {
 				currentBody["model"] = cloudflareAPIModelName(cloudflareDirect, candidate)
 			}
 			sanitizeBody(currentBody)
+			// Config-driven per-model body overrides (e.g. reasoning_effort for
+			// gpt-oss) applied after sanitization so they survive.
+			if extra := modelExtraBodyFor(candidate); len(extra) > 0 {
+				mergeExtraBody(currentBody, extra)
+			}
 			if localOpenAI != nil {
 				if !capLocalRequestContext(currentBody, localOpenAI.ContextSlots) {
 					continue // prompt too big for local context — fall through to next candidate

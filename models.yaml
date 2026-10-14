@@ -184,6 +184,8 @@ geminiModels:
     model: "gemma-4-26b-a4b-it"
   - id: "google/gemma-4-31b-it"
     model: "gemma-4-31b-it"
+  - id: "google/gemini-3.6-flash"
+    model: "gemini-3.6-flash"
 
 # Cerebras: Freeride tries massive budget/performance Cerebras before NVIDIA/meta when size allows.
 # Small entries (8b) are blocked for polecat when local GPU is on (blockSmallCloudWhenLocalGPU).
@@ -196,9 +198,19 @@ cerebrasPerformance:
 
 # Priority 0.6: Groq (Used for fast inference when Cerebras fails or is missing)
 groqBudget:
+  - "groq/openai/gpt-oss-120b"               # 120B MoE, tools/reasoning, 128K ctx — enabled for gt trial
   - "groq/qwen/qwen3.8-27b"                  # 27B dense, 262K context, $0.60/$3.60 per 1M — replaces qwen3.6-27b
 
 groqPerformance:
+
+# Per-model outbound-body overrides, keyed by full candidate id. Deep-merged
+# into the request after sanitization. gpt-oss on Groq is a Harmony reasoning
+# model: it burns the free-tier 8000 TPM budget on reasoning tokens and often
+# emits its CMD into the reasoning channel (empty content). Groq accepts only
+# low/medium/high — "low" cuts reasoning ~10x and keeps the answer in content.
+modelExtraBody:
+  groq/openai/gpt-oss-120b:
+    reasoning_effort: "low"
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
@@ -337,7 +349,7 @@ excludeModels:
   - "qwen/qwen3-coder"                          # 0% success — fails in practice
   - "groq/groq/compound"                        # 0% success
   - "groq/groq/compound-mini"                   # 0% success
-  - "groq/openai/gpt-oss-120b"                  # 0% success
+  # - "groq/openai/gpt-oss-120b"                  # 0% success (re-enabled for gt trial)
   - "groq/openai/gpt-oss-20b"                   # 0% success
   - "groq/openai/gpt-oss-safeguard-20b"         # 0% success
   - "groq/canopylabs/orpheus-v1-english"        # 0% success — requires terms acceptance

@@ -119,6 +119,11 @@ type modelsConfig struct {
 	AnthropicResponseModel      string                            `yaml:"anthropicResponseModel"`
 	ModelClassification         modelClassificationConfig         `yaml:"modelClassification"`
 	CloudflareModels            []cloudflareModel                 `yaml:"cloudflareModels"`
+	// ModelExtraBody holds outbound-body overrides keyed by full candidate id
+	// (e.g. "groq/openai/gpt-oss-120b"). Deep-merged into the request after
+	// sanitization — config-driven per-model requirements such as
+	// {"reasoning_effort": "low"} to dial down gpt-oss reasoning.
+	ModelExtraBody map[string]map[string]interface{} `yaml:"modelExtraBody"`
 }
 
 var (
@@ -145,6 +150,9 @@ func loadModelsConfig() {
 		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.GeminiModels), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
 		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.RoleLocalExclude), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns),
 		len(globalModelsConfig.ModelClassification.NvidiaChatPrefixes), len(globalModelsConfig.ModelClassification.ToolSupportMarkers), len(globalModelsConfig.ModelClassification.ComplexModelHints))
+	if len(globalModelsConfig.ModelExtraBody) > 0 {
+		log.Printf("[INFO] Model body overrides configured for %d model(s)", len(globalModelsConfig.ModelExtraBody))
+	}
 	if len(globalModelsConfig.GeminiModels) > 0 {
 		if resolveGeminiAPIKey() == "" {
 			log.Printf("[WARN] geminiModels configured but GEMINI_API_KEY (or GOOGLE_API_KEY) is unset — Gemini direct routes will be skipped")
@@ -416,6 +424,17 @@ func mergeExtraBody(dst map[string]interface{}, extra map[string]interface{}) {
 		}
 		dst[k] = v
 	}
+}
+
+// modelExtraBodyFor returns configured outbound-body overrides for a candidate
+// id (e.g. dialing down reasoning on gpt-oss models). Returns nil when unset.
+func modelExtraBodyFor(id string) map[string]interface{} {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	if len(globalModelsConfig.ModelExtraBody) == 0 {
+		return nil
+	}
+	return globalModelsConfig.ModelExtraBody[id]
 }
 
 func isLocalOpenAIModelID(id string) bool {
