@@ -45,29 +45,29 @@ rolePrepend:
   # so planner/architect/qa use better models instead of looping on minimax:free.
   polecat:
     - "openai/gpt-5.6-luna"
-    - "minimax/minimax-m3:free"
-    - "nvidia/nemotron-3-super-120b-a12b"
+    - "minimax/minimax-m3.1-flash:free"
+    - "nvidia/nemotron-3.5-super-vl-120b-a12b"
     - "cloudflare/llama-3.3-70b"
   planner:
     - "openai/gpt-5.6-luna"
-    - "minimax/minimax-m3:free"
+    - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/llama-3.3-70b"
   architect:
     - "openai/gpt-5.6-luna"
-    - "minimax/minimax-m3:free"
+    - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
   tester:
     - "openai/gpt-5.6-luna"
-    - "minimax/minimax-m3:free"
+    - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/llama-3.3-70b"
   qa:
     - "openai/gpt-5.6-luna"
     - "google/gemini-3.5-flash"
-    - "minimax/minimax-m3:free"
+    - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
   setup:
     - "openai/gpt-5.6-luna"
-    - "minimax/minimax-m3:free"
+    - "minimax/minimax-m3.1-flash:free"
     - "deepseek/deepseek-v4-flash"
     - "cloudflare/llama-3.3-70b"
 
@@ -214,43 +214,31 @@ modelExtraBody:
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
-  - "minimax/minimax-m3:free"
+  - "minimax/minimax-m3.1-flash:free"
   - "dots-studio/dots-3-note-preview:free"
-  - "qwen/qwen3-coder:free"
-  - "deepseek/deepseek-v4-flash:free"
-  - "deepseek/deepseek-v4.1-flash:free"
-  - "z-ai/glm-4.5-air:free"
   - "qwen/qwen3.8-27b"
   - "google/gemma-4-26b-a4b-it"
   - "google/gemma-4-31b-it"
-  - "nvidia/nemotron-3.5-lightning"
-  - "nvidia/nemotron-3-super-120b-a12b:free"
   - "poolside/laguna-s-2.1"
   - "poolside/laguna-xs-2.1"
-  - "cohere/north-mini-code"
+  - "cohere/north-mini-code:free"
   - "thinkingmachines/inkling"
   - "thinkingmachines/inkling-small"
   - "openrouter/free"
 
-# Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-05-17)
+# Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-10-20)
 # 70b/nemotron-super for agents; 11b for lighter tasks.
 nvidiaReliable:
-  - "nvidia/nemotron-3-super-120b-a12b"
-  - "nvidia/nemotron-3-super-120b-a12b:free"
-  - "nvidia/nemotron-3.5-lightning"
+  - "nvidia/nemotron-3.5-super-vl-120b-a12b"
   - "nvidia/nemotron-3-ultra-550b-a55b"
-  - "nvidia/nemotron-3-ultra-550b-a55b:free"
   - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
   - "meta/llama-3.2-11b-vision-instruct"
 
 # Priority 2.5: Complex-task NVIDIA models (always tried first for complex requests)
 # These are only used when isComplex() detects tools, long context, or agent workflows.
 nvidiaComplex:
-  - "nvidia/nemotron-3-super-120b-a12b"
-  - "nvidia/nemotron-3-super-120b-a12b:free"
+  - "nvidia/nemotron-3.5-super-vl-120b-a12b"
   - "nvidia/nemotron-3-ultra-550b-a55b"
-  - "nvidia/nemotron-3-ultra-550b-a55b:free"
-  - "nvidia/nemotron-3.5-lightning"
 
 # Cloudflare Workers AI models — free inference via Workers AI (no allow-paid needed)
 # Requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env vars set
@@ -331,10 +319,11 @@ excludeModels:
   - "nvidia/nemotron-3-nano-30b-a3b"         # REASONING MODEL — produces reasoning_content, no content
   - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" # REASONING MODEL
   - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # REASONING MODEL
-  - "nvidia/nemotron-3-ultra-550b-a55b:free"  # ANALYSIS-ONLY — cannot execute CMD/WRITE/EDIT markers
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"  # ANALYSIS-ONLY — cannot execute CMD/WRITE/EDIT markers; NIM-routed 404 (2026-10-20)
   - "nvidia/nemotron-3-ultra-550b-a55b"       # ANALYSIS-ONLY
-  - "nvidia/nemotron-3-super-120b-a12b"       # ANALYSIS-ONLY
-  - "nvidia/nemotron-3-super-120b-a12b:free"   # ANALYSIS-ONLY (OpenRouter)
+  - "nvidia/nemotron-3-super-120b-a12b"       # NIM function retired — 404 Function not found (2026-10-20); was ANALYSIS-ONLY
+  - "nvidia/nemotron-3-super-120b-a12b:free"   # NIM function retired — 404 (2026-10-20); was ANALYSIS-ONLY (OpenRouter)
+  - "nvidia/nemotron-3.5-lightning"            # NIM 404 — page not found (2026-10-20)
   - "nvidia/llama-3.3-nemotron-super-49b-v1"   # ANALYSIS-ONLY
   - "nvidia/llama-3.3-nemotron-super-49b-v1.5" # 49B — weak/erratic on agent tasks (empty content, 40% flaky)
   - "meta/llama-3.3-70b-instruct"              # NIM timeout — cannot handle context
@@ -343,6 +332,13 @@ excludeModels:
   - "allam-2-7b"                                  # TOO SMALL (7B) — produces garbled output on agent tasks
   - "allam-2-7b:free"                             # TOO SMALL (7B)
   - "nvidia/nemotron-3.5-lightning-30b-a3b"     # LIGHTNING MODEL — too weak for coding/agent tasks
+  # Free-tier slugs removed by providers (verified dead 2026-10-20)
+  - "minimax/minimax-m3:free"                   # 404 — free variant removed, paid slug is minimax/minimax-m3
+  - "qwen/qwen3-coder:free"                     # 404 — free variant removed (paid variant also 0% success)
+  - "z-ai/glm-4.5-air:free"                     # 404 — free variant removed
+  - "deepseek/deepseek-v4-flash:free"           # 404 — free variant removed (paid slug: deepseek/deepseek-v4-flash)
+  - "deepseek/deepseek-v4.1-flash:free"         # 404 — free variant removed (paid slug: deepseek/deepseek-v4.1-flash)
+  - "cohere/north-mini-code"                    # 404 — no endpoints; free slug is cohere/north-mini-code:free
   # Models with 0% success rate in live testing (2026-08-27)
   - "cerebras/gpt-oss-120b"                     # 0% success — Cerebras catalog issues
   - "cerebras/gemma-4-31b"                      # 0% success — Cerebras catalog issues
