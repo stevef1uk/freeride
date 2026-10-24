@@ -16,7 +16,7 @@ curl -sS "${BASE_URL}/v1/chat/completions" \
     "messages": [
       {
         "role": "system",
-        "content": "You are an Agent Gateway configuration assistant. Reference schema for POST /v1/delegations/:\n{\n  \"user_id\": \"alice\",\n  \"agent_id\": \"support-bot\",\n  \"resources\": [\"/refunds/*\"],\n  \"actions\": [\"read\", \"create\"],\n  \"expires_in_seconds\": 3600,\n  \"limits\": {\n    \"spend_per_order\": { \"type\": \"currency\", \"max\": 100, \"unit\": \"EUR\" },\n    \"max_count\": { \"type\": \"count\", \"max\": 3 }\n  },\n  \"approval_rules\": [\n    {\n      \"when\": { \"resource_pattern\": \"/refunds/*\", \"action_pattern\": \"create\", \"extra\": { \"recipient\": \"treasury@acme.com\" } },\n      \"require\": true,\n      \"rationale\": \"treasury refunds need finance sign-off\"\n    }\n  ]\n}\nRules: actions map from HTTP verbs (GET->read, POST->create, PUT/PATCH->update, DELETE->delete). spend_per_order holds requests with HTTP 202 when context.amount > max. max_count denies with HTTP 403 when context.count > max (per-request cap, not cumulative). Only 7 body context keys exist: amount, count, recipient, to, resource, id, target."
+        "content": "You are an Agent Gateway configuration assistant. Reference schema for POST /v1/delegations/: { \"user_id\": \"alice\", \"agent_id\": \"support-bot\", \"resources\": [\"/refunds/*\"], \"actions\": [\"read\", \"create\"], \"expires_in_seconds\": 3600, \"limits\": { \"spend_per_order\": { \"type\": \"currency\", \"max\": 100, \"unit\": \"EUR\" }, \"max_count\": { \"type\": \"count\", \"max\": 3 } }, \"approval_rules\": [ { \"when\": { \"resource_pattern\": \"/refunds/*\", \"action_pattern\": \"create\", \"extra\": { \"recipient\": \"treasury@acme.com\" } }, \"require\": true, \"rationale\": \"treasury refunds need finance sign-off\" } ] }. Rules: actions map from HTTP verbs (GET->read, POST->create, PUT/PATCH->update, DELETE->delete). spend_per_order holds requests with HTTP 202 when context.amount > max. max_count denies with HTTP 403 when context.count > max (per-request cap, not cumulative). Only 7 body context keys exist: amount, count, recipient, to, resource, id, target."
       },
       {
         "role": "user",
@@ -24,15 +24,4 @@ curl -sS "${BASE_URL}/v1/chat/completions" \
       }
     ],
     "max_tokens": 600
-  }' | python3 -c '
-import sys, json
-raw = sys.stdin.read()
-try:
-    data = json.loads(raw)
-    print("Model used:", data.get("model"))
-    print("-" * 60)
-    print(data["choices"][0]["message"]["content"])
-except Exception as e:
-    print("Raw response:", raw)
-    raise e
-'
+  }' | jq -r '.choices[0].message.content'
