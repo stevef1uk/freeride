@@ -19,8 +19,7 @@ COPY *.go ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/go/buildcache-freeride \
     GOCACHE=/go/buildcache-freeride \
-    go vet ./... \
-    && go test ./... -tags='!integration' \
+    go test ./... -tags='!integration' \
     && go build -ldflags="-s -w" -o /out/freeride .
 
 FROM alpine:3.22

@@ -97,21 +97,24 @@ compatModels:
 defaultResponseModel: "gpt-4o"
 anthropicResponseModel: "claude-3-5-sonnet-20241022"
 
-# Dial down excessive reasoning tokens on reasoning-heavy free models so the
-# final answer always lands in message.content within normal max_tokens budgets.
+# Disable internal reasoning tokens on OpenRouter free reasoning models so 100%
+# of max_tokens is used for the actual message.content response (0 reasoning_tokens).
 modelExtraBody:
   dots-studio/dots-3-note-preview:free:
     reasoning:
-      effort: "low"
+      enabled: false
   cohere/north-mini-code:free:
     reasoning:
-      effort: "low"
+      enabled: false
   nvidia/nemotron-3-ultra-550b-a55b:free:
     reasoning:
-      effort: "low"
+      enabled: false
   nvidia/nemotron-3.5-super-vl:free:
     reasoning:
-      effort: "low"
+      enabled: false
+  poolside/laguna-s-2.1:free:
+    reasoning:
+      enabled: false
 
 # Models to exclude on OpenRouter (broken, retired, harness-locked, or weak/non-chat)
 excludeModels:
