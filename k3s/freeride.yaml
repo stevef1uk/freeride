@@ -1,0 +1,97 @@
+# Freeride Proxy on k3s — standalone deployment (NO Gas Town components)
+# Namespace: freeride
+#
+# In-cluster endpoint for other Pods across any namespace:
+#   Base URL (OpenAI-compatible): http://freeride.freeride.svc.cluster.local:11434/v1
+#   Chat Completions URL:         http://freeride.freeride.svc.cluster.local:11434/v1/chat/completions
+#   Ollama Tags URL:              http://freeride.freeride.svc.cluster.local:11434/api/tags
+#
+# NodePort endpoint for testing from host / LAN (e.g. 192.168.1.74):
+#   http://<node-ip>:31434/v1/chat/completions
+#
+# Prerequisite:
+#   Run ./k3s/setup-secret.sh first to populate Secret 'freeride-secrets'
+#   (OPENROUTER_API_KEY from .env) and ConfigMap 'freeride-models' (from k3s/models.yaml).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: freeride
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freeride
+  namespace: freeride
+  labels:
+    app: freeride
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: freeride
+  template:
+    metadata:
+      labels:
+        app: freeride
+    spec:
+      containers:
+        - name: freeride
+          image: stevef1uk/freeride:1.4.0
+          imagePullPolicy: Always
+          args: ["--debug"]
+          ports:
+            - name: http
+              containerPort: 11434
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "11434"
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: freeride-secrets
+                  key: OPENROUTER_API_KEY
+          volumeMounts:
+            - name: models-config
+              mountPath: /app/models.yaml
+              subPath: models.yaml
+              readOnly: true
+            - name: runtime-data
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /api/hello
+              port: 11434
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/hello
+              port: 11434
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      volumes:
+        - name: models-config
+          configMap:
+            name: freeride-models
+        - name: runtime-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeride
+  namespace: freeride
+  labels:
+    app: freeride
+spec:
+  type: NodePort
+  selector:
+    app: freeride
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+      nodePort: 31434
+      protocol: TCP

@@ -1,0 +1,133 @@
+# Simplified models.yaml for Freeride k3s deployment (namespace: freeride).
+#
+# Standalone OpenRouter-only configuration (no Gas Town roles, no local GPU/IDE
+# bridges, no paid fallbacks). Designed to power interactive/automated helpers
+# such as explaining and generating Agent Gateway API protection configs
+# (delegations, resource/action patterns, spend_per_order, max_count,
+# approval_rules, and OPA/Rego policies).
+
+# Substring patterns classifying a model as large/capable.
+massiveModelPatterns:
+  - "550b"
+  - "120b"
+  - "70b"
+  - "31b"
+  - "29b"
+  - "27b"
+  - "26b"
+  - "large"
+  - "ultra"
+  - "super"
+  - "sonnet"
+  - "gpt-4"
+
+# Priority 1: Verified working free OpenRouter models capable of structured
+# configuration generation and technical explanation (such as Agent Gateway
+# Protecting-Your-API.md workflows).
+reliableFree:
+  - "dots-studio/dots-3-note-preview:free"
+  - "cohere/north-mini-code:free"
+  - "poolside/laguna-s-2.1:free"
+  - "nvidia/nemotron-3-ultra-550b-a55b:free"
+  - "nvidia/nemotron-3.5-super-vl:free"
+  - "google/gemma-4-31b-it:free"
+  - "google/gemma-4-26b-a4b-it:free"
+  - "openrouter/free"
+
+# OpenRouter free-model ranking boosts (substring match on model id)
+freeModelScoreBoost:
+  - pattern: "dots-3-note-preview"
+    boost: 10.0
+  - pattern: "north-mini-code"
+    boost: 9.0
+  - pattern: "laguna-s-2.1"
+    boost: 8.5
+  - pattern: "nemotron-3-ultra-550b"
+    boost: 8.0
+  - pattern: "nemotron-3.5-super"
+    boost: 7.5
+  - pattern: "gemma-4-31b"
+    boost: 6.0
+
+trustedScoringNames:
+  - google
+  - meta
+  - nvidia
+  - cohere
+  - poolside
+  - qwen
+  - deepseek
+
+# Model-name classification heuristics
+modelClassification:
+  toolSupportMarkers:
+    - "dots-3"
+    - "north-mini-code"
+    - "laguna"
+    - "nemotron"
+    - "gemma-4"
+    - "llama-3.3"
+    - "qwen"
+    - "deepseek"
+  complexModelHints:
+    - "sonnet"
+    - "gpt-4o"
+    - "opus"
+    - "o1-"
+  openRouterExcluded:
+    - "lyria"
+    - "liquid"
+    - "content-safety"
+  weakModelMarkers:
+    - "-1b-"
+    - "-2.6b"
+    - "-3b-"
+    - "-7b-"
+    - "-8b-"
+
+# Shown on /v1/models for clients that probe before chat
+compatModels:
+  - id: gpt-4o
+    displayName: GPT-4o (Freeride Free Router)
+    ownedBy: openai
+  - id: claude-3-5-sonnet-20241022
+    displayName: Claude 3.5 Sonnet (Freeride Free Router)
+    ownedBy: anthropic
+
+defaultResponseModel: "gpt-4o"
+anthropicResponseModel: "claude-3-5-sonnet-20241022"
+
+# Dial down excessive reasoning tokens on reasoning-heavy free models so the
+# final answer always lands in message.content within normal max_tokens budgets.
+modelExtraBody:
+  dots-studio/dots-3-note-preview:free:
+    reasoning:
+      effort: "low"
+  cohere/north-mini-code:free:
+    reasoning:
+      effort: "low"
+  nvidia/nemotron-3-ultra-550b-a55b:free:
+    reasoning:
+      effort: "low"
+  nvidia/nemotron-3.5-super-vl:free:
+    reasoning:
+      effort: "low"
+
+# Models to exclude on OpenRouter (broken, retired, harness-locked, or weak/non-chat)
+excludeModels:
+  - "thinkingmachines/inkling:free"                 # 403 — restricted to specific agentic harnesses
+  - "thinkingmachines/inkling-small:free"           # 403 — restricted to specific agentic harnesses
+  - "thinkingmachines/inkling"                      # 403 — restricted to specific agentic harnesses
+  - "thinkingmachines/inkling-small"                # 403 — restricted to specific agentic harnesses
+  - "minimax/minimax-m3.1-flash:free"               # 404 — free launch period ended
+  - "minimax/minimax-m3:free"                       # 404 — free variant retired
+  - "nvidia/nemotron-3-super-120b-a12b:free"        # 404 — upstream endpoint retired
+  - "nvidia/nemotron-3.5-lightning:free"            # empty content / reasoning-only exhaustion
+  - "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # reasoning-only exhaustion
+  - "nvidia/nemotron-3.5-content-safety:free"       # safety classifier, not chat
+  - "recursive/flint-v1.0:free"                     # empty content on structured config tasks
+  - "liquid/lfm-2.5-2.6b:free"                      # 2.6B — too small for accurate gateway config
+  - "google/lyria-3-pro-preview"                    # audio model
+  - "google/lyria-3-clip-preview"                   # audio model
+  - "meta-llama/llama-3.2-1b-instruct:free"         # too small
+  - "meta-llama/llama-3.2-3b-instruct:free"         # too small

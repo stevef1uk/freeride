@@ -1,4 +1,10 @@
-.PHONY: all build clean test run do_it_all wait-for-gt-stack check-do-it-all-deps
+.PHONY: all build clean test run do_it_all wait-for-gt-stack check-do-it-all-deps image push k3s-secret k3s-deploy
+
+REGISTRY  ?= docker.io/stevef1uk
+IMAGE     ?= $(REGISTRY)/freeride
+VERSION   ?= 1.4.0
+BUILDER   ?= agent-gateway-builder
+PLATFORMS ?= linux/amd64,linux/arm64
 
 # Default target
 all: build
@@ -6,6 +12,24 @@ all: build
 # Build the freeride binary
 build:
 	go build -o freeride .
+
+# Build container image (host arch)
+image:
+	docker build -f Dockerfile -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
+
+# Build + push multi-arch container image for k3s
+push:
+	docker buildx build --builder $(BUILDER) --platform $(PLATFORMS) --pull \
+		-f Dockerfile \
+		-t $(IMAGE):$(VERSION) -t $(IMAGE):latest --push .
+
+# Populate k3s Secret (OPENROUTER_API_KEY from .env) and ConfigMap (from k3s/models.yaml)
+k3s-secret:
+	./k3s/setup-secret.sh
+
+# Apply k3s Secret/ConfigMap and Deployment/Service in namespace freeride
+k3s-deploy: k3s-secret
+	kubectl apply -f k3s/freeride.yaml
 
 # Run the proxy
 run: build
