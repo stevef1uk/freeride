@@ -599,6 +599,7 @@ Freeride ships helper scripts used when `FREERIDE_ROOT` is set (as `make do_it_a
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `FREERIDE_UPSTREAM_TIMEOUT` | `4m` (local OpenAI: `20m`) | Full upstream LLM request deadline, including response-body generation. Accepts Go durations, e.g. `4m` or `240s`. Keep the agent's LLM timeout longer than this; fallback candidates share the agent's remaining request time. Non-streaming body-read failures are logged and fall back to the next model. |
 | `WAIT_TIMEOUT_SEC` | `120` | Max seconds per wait phase (NATS, orchestrator). Use `300` when Docker may still be pulling or starting `gt-nats` on first boot. |
 | `GT_ROOT` / `GT_DIR` | `~/gt` | Town root for orchestrator checks |
 | `FREERIDE_ROOT` | (set by Makefile) | Directory containing `scripts/` for e2e bootstrap |

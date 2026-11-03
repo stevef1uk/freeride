@@ -466,14 +466,12 @@ if len(candidates) == 0 {
 			outboundBody = bodyBytes
 		}
 
-		upstreamTimeout := 60 * time.Second
-		if isLocalOpenAIModelID(candidate) {
-			upstreamTimeout = 1200 * time.Second
-		}
+		upstreamTimeout := upstreamRequestTimeout(candidate)
 		upCtx, upCancel := context.WithTimeout(context.Background(), upstreamTimeout)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)
+			upCancel()
 			continue
 		}
 
@@ -574,7 +572,32 @@ if len(candidates) == 0 {
 			continue
 		}
 
-		// Log success only for 2xx
+		// A 200 header is not a completed answer: providers can send headers
+		// immediately and spend minutes generating the non-streaming body. Read
+		// it before marking success or writing downstream headers so read errors
+		// can fall back to another candidate instead of restarting the agent turn.
+		if !isStream {
+			body, readErr := readUpstreamBody(resp)
+			if readErr != nil {
+				log.Printf("[ERROR] Model %s upstream body failed after %v (timeout %v, bytes %d): %v", candidate, time.Since(attemptStart).Round(time.Millisecond), upstreamTimeout, len(body), readErr)
+				if !isLocalOpenAIModelID(candidate) && !errors.Is(readErr, context.Canceled) {
+					markCooldown(candidate)
+				}
+				upCancel()
+				if i < len(candidates)-1 {
+					log.Printf("[INFO] Falling back from %s to %s", candidate, candidates[i+1])
+					continue
+				}
+				http.Error(w, "Failed to read upstream body; see Freeride logs for details", http.StatusBadGateway)
+				return
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			resp.Header.Del("Content-Encoding")
+			resp.Header.Del("Content-Length")
+			resp.ContentLength = int64(len(body))
+		}
+
+		// For non-streaming requests, success means the complete body was read.
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			elapsed := time.Since(attemptStart).Round(time.Millisecond)
 			if isLocalOpenAIModelID(candidate) {
@@ -808,11 +831,48 @@ func translateResponse(body []byte, overrideModel string) []byte {
 	return newBody
 }
 
+// upstreamRequestTimeout covers both response headers and the complete body.
+// Reasoning models often acknowledge a request long before the answer is ready.
+func upstreamRequestTimeout(candidate string) time.Duration {
+	timeout := 4 * time.Minute
+	if isLocalOpenAIModelID(candidate) {
+		timeout = 20 * time.Minute
+	}
+	if value := os.Getenv("FREERIDE_UPSTREAM_TIMEOUT"); value != "" {
+		if configured, err := time.ParseDuration(value); err == nil && configured > 0 {
+			return configured
+		}
+		log.Printf("[WARN] Invalid FREERIDE_UPSTREAM_TIMEOUT %q; using %v", value, timeout)
+	}
+	return timeout
+}
+
+// readUpstreamBody always closes the upstream body, including on gzip/read errors.
+func readUpstreamBody(resp *http.Response) ([]byte, error) {
+	defer resp.Body.Close()
+	var reader io.Reader = resp.Body
+	switch resp.Header.Get("Content-Encoding") {
+	case "gzip":
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("creating upstream gzip reader: %w", err)
+		}
+		defer gzipReader.Close()
+		reader = gzipReader
+	}
+	return io.ReadAll(reader)
+}
+
 func copyResponse(w http.ResponseWriter, resp *http.Response, overrideModel string) {
+	bodyBytes, err := readUpstreamBody(resp)
+	if err != nil {
+		log.Printf("[ERROR] Failed to read upstream body: %v", err)
+		http.Error(w, "Failed to read upstream body; see Freeride logs for details", http.StatusBadGateway)
+		return
+	}
 	if debugMode {
 		log.Printf("[DEBUG] Response Headers: %v", resp.Header)
 	}
-
 	for k, vv := range resp.Header {
 		if strings.ToLower(k) == "content-length" || strings.ToLower(k) == "content-encoding" {
 			continue
@@ -821,27 +881,6 @@ func copyResponse(w http.ResponseWriter, resp *http.Response, overrideModel stri
 			w.Header().Add(k, v)
 		}
 	}
-
-	var reader io.ReadCloser
-	var err error
-	switch resp.Header.Get("Content-Encoding") {
-	case "gzip":
-		reader, err = gzip.NewReader(resp.Body)
-		if err != nil {
-			http.Error(w, "Failed to create gzip reader", http.StatusInternalServerError)
-			return
-		}
-		defer reader.Close()
-	default:
-		reader = resp.Body
-	}
-
-	bodyBytes, err := ioutil.ReadAll(reader)
-	if err != nil {
-		http.Error(w, "Failed to read upstream body", http.StatusInternalServerError)
-		return
-	}
-	resp.Body.Close()
 
 	translated := translateResponse(bodyBytes, overrideModel)
 	log.Printf("[DEBUG] LLM Response: %s", string(translated))
