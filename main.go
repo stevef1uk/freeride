@@ -267,9 +267,13 @@ if len(candidates) == 0 {
 	}
 	}
 
+	candidates, sharedModels := preferDifferentRoleModels(candidates, ctx)
 	log.Printf("[DEBUG] Final Candidates: %v", candidates)
 
 	for i, candidate := range candidates {
+		if sharedModels[modelIdentity(candidate)] {
+			log.Printf("[DIVERSITY] role=%s using shared model %s as last resort; independent candidates unavailable or failed", role, candidate)
+		}
 		// Determine which API to use based on model prefix
 		var targetURL string
 		var apiKey string
@@ -612,6 +616,7 @@ if len(candidates) == 0 {
 				log.Printf("Model %s succeeded (status %d). Returning response to client.", candidate, resp.StatusCode)
 			}
 			markSuccess(candidate)
+			recordRoleModel(role, candidate, conf)
 		} else {
 			log.Printf("Model %s returned status %d. Skipping (not cooling down).", candidate, resp.StatusCode)
 		}

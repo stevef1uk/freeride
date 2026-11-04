@@ -922,6 +922,87 @@ localOpenAI:
 
 Run Freeride with `./freeride --debug --allow-local-openai`. Traffic uses cloud first; local GPU only when cloud is unavailable or cooled down.
 
+### Independent QA model preference
+
+`rolePreferDifferentFrom` makes QA prefer capable alternatives to models used by
+polecat, planner, tester, architect, and setup:
+
+```yaml
+rolePreferDifferentFrom:
+  qa: [polecat, planner, tester, architect, setup]
+```
+
+Freeride records successful model selections for those roles and moves matching
+models to the end of QA's **entire** eligible candidate chain, after provider
+priority and emergency fallback selection. Their configured paid-first primaries
+are also deferred before any usage has been observed. Shared models are still
+tried if every independent candidate is unavailable or fails; the log marks these
+attempts with `[DIVERSITY]`. Existing capability, cooldown, exclusion, and paid-model
+rules still apply. QA's curated alternatives are configured in `rolePrepend.qa`;
+with `--allow-paid`, eligible independent entries lead the independent tier ahead
+of generic provider-priority routes.
+
+History is in memory and resets on proxy restart. Because requests currently carry
+a role but no rig identifier, it covers all rigs using this proxy. Recognized
+provider wrappers and `:free` suffixes do not count as different models.
+
+The QA shortlist was checked against the [live OpenRouter catalog](https://openrouter.ai/api/v1/models)
+on **2026-11-04**. Prices below are USD per million tokens, before caching:
+
+| Model | Input | Output | Context |
+| --- | ---: | ---: | ---: |
+| `z-ai/glm-5.3-flash` | $0.0269 | $0.0996 | 1,048,576 |
+| `anthropic/claude-haiku-5.5` | $0.10 | $0.50 | 1,000,000 |
+| `deepseek/deepseek-v4.1-flash` | $0.045 | $0.50 | 1,048,576 |
+| `minimax/minimax-m3.1-flash` | $0.15 | $0.60 | 1,048,576 |
+
+Haiku's catalog rates rise to $0.50/$2.50 above 100,000 input tokens. MiniMax has
+time-dependent discounts. Reasoning tokens are billed as output. GLM, Haiku, and
+DeepSeek each correctly identified a planted inverted-boolean bug in a small live
+review probe; this verifies availability and basic review behavior, not broad QA
+quality. NVIDIA Nemotron 3.5 Super VL 120B remains another alternative, backed by
+successful calls in the local proxy log. Shared-model fallback is logged explicitly.
+
+### Refresh the QA shortlist interactively
+
+Run the standard-library-only Python script from the repository root:
+
+```bash
+# Check OpenRouter's live catalog, choose models, preview the diff, then confirm.
+python3 scripts/recommend_qa_models.py
+
+# Also make small billable requests to check that candidates catch a planted bug.
+python3 scripts/recommend_qa_models.py --probe
+
+# Report only: never prompt or write.
+python3 scripts/recommend_qa_models.py --dry-run
+
+# Adjust USD-per-million price ceilings, context requirements, or result count.
+python3 scripts/recommend_qa_models.py --max-input 0.25 --max-output 0.75 --min-context 200000 --limit 10
+
+# Include free endpoints in the shortlist as well.
+python3 scripts/recommend_qa_models.py --include-free --probe
+```
+
+The script filters for text output, tool support, coding/agent descriptions, context
+length, and price. Existing curated QA models also qualify without coding claims
+in their descriptions. Free routes are opt-in with `--include-free`. It respects
+`excludeModels`, avoids other roles' configured
+primaries, and skips model IDs that Freeride would route to a different provider.
+It ranks candidates by the estimated cost of a **50k-input / 2k-output-token review**
+and shows any catalog pricing overrides. These are discovery heuristics, not quality
+benchmarks. `--probe` requires `OPENROUTER_API_KEY` in the environment or the `.env`
+beside `models.yaml`; only passing candidates can then be selected.
+
+In a terminal, enter model numbers in preference order. The script shows the exact
+diff and asks **“Apply these changes to models.yaml? [y/N]”**. On confirmation it
+updates only `rolePrepend.qa`, retains existing QA fallbacks, defers shared primary
+models, and saves a timestamped `models.yaml.bak-*` backup before an atomic write.
+Other roles and settings are preserved. Noninteractive runs only report; they never
+write. Use `--config /path/to/models.yaml` for another installation. Freeride's
+config watcher picks up accepted changes automatically; the diversity-routing code
+itself requires a proxy rebuild/restart when first installed.
+
 ### Example `models.yaml` (abbreviated)
 
 ```yaml

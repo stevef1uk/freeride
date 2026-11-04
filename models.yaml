@@ -40,6 +40,12 @@ rolePrependBeforeOriginal:
   - tester
   - setup
 
+# Prefer independent reviewers across the entire fallback chain. Models actually
+# used by these roles (and their paid-first primaries) move to QA's last-resort
+# tier; they remain available if all capable independent candidates fail.
+rolePreferDifferentFrom:
+  qa: [polecat, planner, tester, architect, setup]
+
 rolePrepend:
   # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
   # so planner/architect/qa use better models instead of looping on minimax:free.
@@ -61,10 +67,20 @@ rolePrepend:
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/llama-3.3-70b"
   qa:
-    - "openai/gpt-5.6-luna"
+    # OpenRouter catalog + small bug-review probes checked 2026-11-04.
+    # $/1M input/output: GLM .0269/.0996, Haiku .10/.50 (<100k input),
+    # DeepSeek V4.1 Flash .045/.50. All support tools and ~1M context.
+    - "z-ai/glm-5.3-flash"
+    - "anthropic/claude-haiku-5.5"
+    - "deepseek/deepseek-v4.1-flash"
+    - "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    - "minimax/minimax-m3.1-flash"
+    - "google/gemini-3.6-flash"
     - "google/gemini-3.5-flash"
+    - "deepseek/deepseek-v4-flash"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
+    - "openai/gpt-5.6-luna" # shared-model last resort, enforced across all tiers
   setup:
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3.1-flash:free"

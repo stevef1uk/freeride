@@ -107,6 +107,7 @@ type modelsConfig struct {
 	LocalOpenAI                 []localOpenAIModel                `yaml:"localOpenAI"`
 	RolePrepend                 map[string][]string               `yaml:"rolePrepend"`
 	RolePrependBeforeOriginal   []string                          `yaml:"rolePrependBeforeOriginal"`
+	RolePreferDifferentFrom     map[string][]string               `yaml:"rolePreferDifferentFrom"`
 	RoleLocalFirst              map[string][]string               `yaml:"roleLocalFirst"`
 	RoleLocalOnly               []string                          `yaml:"roleLocalOnly"`
 	RoleLocalExclude            []string                          `yaml:"roleLocalExclude"`
