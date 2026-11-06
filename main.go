@@ -242,29 +242,29 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[DEBUG] using local OpenAI fallback candidates: %v", candidates)
 			}
 		}
-if len(candidates) == 0 {
-		if allowPaid {
-			log.Printf("[DEBUG] All free models in cooldown, attempting paid fallback for role=%s", ctx.role)
-			// Try to select paid model candidates when allowPaid is set
-			paidCandidates := selectPaidCandidates(ctx, originalModel)
-			if len(paidCandidates) > 0 {
-				candidates = paidCandidates
-				log.Printf("[DEBUG] Paid fallback candidates selected: %v", candidates)
+		if len(candidates) == 0 {
+			if allowPaid {
+				log.Printf("[DEBUG] All free models in cooldown, attempting paid fallback for role=%s", ctx.role)
+				// Try to select paid model candidates when allowPaid is set
+				paidCandidates := selectPaidCandidates(ctx, originalModel)
+				if len(paidCandidates) > 0 {
+					candidates = paidCandidates
+					log.Printf("[DEBUG] Paid fallback candidates selected: %v", candidates)
+				} else {
+					log.Printf("[DEBUG] No paid candidates available, returning overloaded error")
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All models currently unavailable. Please try again later."}}`))
+					return
+				}
 			} else {
-				log.Printf("[DEBUG] No paid candidates available, returning overloaded error")
+				log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All models currently unavailable. Please try again later."}}`))
+				w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
 				return
 			}
-		} else {
-			log.Printf("[ERROR] All free models are in cooldown, refusing to fall back to paid model: %s", originalModel)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"error": {"type": "overloaded_error", "message": "All free models are currently in cooldown. Please try again in 30 seconds."}}`))
-			return
 		}
-	}
 	}
 
 	candidates, sharedModels := preferDifferentRoleModels(candidates, ctx)
@@ -470,8 +470,25 @@ if len(candidates) == 0 {
 			outboundBody = bodyBytes
 		}
 
+		if r.Header.Get("X-GasTown-Workflow") != "" && strings.HasPrefix(targetURL, "https://openrouter.ai/") {
+			budgetPath, pathErr := workflowBudgetPath()
+			if pathErr != nil {
+				http.Error(w, pathErr.Error(), http.StatusPaymentRequired)
+				return
+			}
+			bounded, budgetErr := applyOpenRouterWorkflowBudget(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow"), budgetPath, outboundBody, models)
+			if budgetErr != nil {
+				http.Error(w, budgetErr.Error(), http.StatusPaymentRequired)
+				return
+			}
+			outboundBody = bounded
+		}
+		if err := admitWorkflowUpstream(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow")); err != nil {
+			http.Error(w, err.Error(), http.StatusPaymentRequired)
+			return
+		}
 		upstreamTimeout := upstreamRequestTimeout(candidate)
-		upCtx, upCancel := context.WithTimeout(context.Background(), upstreamTimeout)
+		upCtx, upCancel := context.WithTimeout(r.Context(), upstreamTimeout)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)

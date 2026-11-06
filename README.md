@@ -1179,3 +1179,52 @@ Live tests in `proxy_test.go` are skipped without `FREERIDE_INTEGRATION=1` so CI
 ## License
 
 MIT License.
+
+### Workflow execution budgets
+
+Gastown agents now pass workflow and rig identity to FreeRide. Each upstream
+attempt, including a fallback, reserves a durable slot before dispatch. Defaults
+for identified workflows are 1000 upstream attempts, a $5 OpenRouter workflow
+allowance and a $20 OpenRouter allowance shared by workflows on the same rig.
+Known free routes do not consume the dollar allowance. These defaults apply only
+to requests carrying the workflow identity; they are not account-wide controls.
+
+Configure the proxy process with:
+
+```bash
+export FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS=1000
+export FREERIDE_WORKFLOW_MAX_COST_USD=5
+export FREERIDE_RIG_MAX_COST_USD=20
+export FREERIDE_MAX_PROMPT_USD_PER_MILLION=1
+export FREERIDE_MAX_COMPLETION_USD_PER_MILLION=5
+# Optional: choose a persistent location shared by proxy processes on this host.
+export FREERIDE_EXECUTION_BUDGET_PATH=/path/to/persistent/execution-budgets.json
+```
+
+Without an explicit path, accounting lives in the operating system's user config
+directory under `freeride/execution-budgets.json`. The `.usd` companion ledger
+stores reserved microdollars. Both use process locks and atomic replacement.
+Allowances persist across proxy restarts; errors and interrupted calls are not
+refunded automatically. Invalid or corrupt accounting stops identified workflow
+requests instead of assuming a fresh allowance.
+
+OpenRouter text requests reserve a conservative input-byte/output-token cost.
+The proxy applies matching `provider.max_price` caps, retaining stricter caller
+caps and using lower catalog prices when known. Per-request/image charges,
+multiple completions, paid server tools and media are excluded from this policy.
+See [OpenRouter's provider price-cap contract](https://openrouter.ai/docs/guides/routing/provider-selection#max-price).
+A provider that changes prices above the cap should reject the request. This is
+local admission control for this proxy and supported text requests, not a
+substitute for provider account controls or a guarantee about external billing.
+Other providers currently receive attempt limits, not dollar accounting.
+
+`--allow-paid` still permits paid routing; it does not bypass these controls.
+A 402/403 or exhausted budget pauses the identified gastown workflow. Inspect the
+cause and explicitly adjust its allowance before resuming. Never delete ledgers
+while agents are active. Calls that omit or forge identity headers are outside
+this accounting boundary, so do not expose the proxy as an unauthenticated public
+service.
+
+See [gastown workflow recovery](gastown/docs/design/workflow-resilience.md) for
+checkpoint batching, agent-side token/request reservations, installation and
+remaining architectural work.
