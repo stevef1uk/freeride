@@ -471,19 +471,22 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var costReservation *workflowCostReservation
-		if r.Header.Get("X-GasTown-Workflow") != "" && strings.HasPrefix(targetURL, "https://openrouter.ai/") {
+		if r.Header.Get("X-GasTown-Workflow") != "" {
 			budgetPath, pathErr := workflowBudgetPath()
 			if pathErr != nil {
 				http.Error(w, pathErr.Error(), http.StatusPaymentRequired)
 				return
 			}
-			bounded, reservation, budgetErr := reserveOpenRouterWorkflowBudget(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow"), budgetPath, outboundBody, models)
+			bounded, reservation, budgetErr := reserveProviderWorkflowBudget(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow"), budgetPath, outboundBody, candidate, targetURL, models, conf.WorkflowPricing)
 			if budgetErr != nil {
 				http.Error(w, budgetErr.Error(), http.StatusPaymentRequired)
 				return
 			}
 			outboundBody = bounded
 			costReservation = reservation
+			if reservation != nil {
+				defer reservation.finishAccounting()
+			}
 		}
 		if err := admitWorkflowUpstream(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow")); err != nil {
 			_ = costReservation.settleCost(0)
@@ -656,6 +659,12 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Model %s returned status %d. Skipping (not cooling down).", candidate, resp.StatusCode)
 		}
 
+		if costReservation != nil {
+			w.Header().Set("X-Freeride-Cost-Accounting", costReservation.accountingMode())
+			if costReservation.accountingMode() == "unknown" {
+				w.Header().Set("X-Freeride-Budget-Warning", "Cost unknown: configure workflowPricing for this route; request limits and Gas Town token limits remain active.")
+			}
+		}
 		// Translate based on protocol
 		if resp.StatusCode == 200 {
 			if isAnthropic {
@@ -1752,6 +1761,8 @@ func main() {
 			handleTags(w, r)
 		case "/api/version":
 			handleVersion(w, r)
+		case "/api/budgets":
+			handleWorkflowBudgetStatus(w, r)
 		case "/api/hello", "/v1/oauth/hello":
 			handleHello(w, r)
 		case "/v1/messages/count_tokens", "/v1/v1/messages/count_tokens":

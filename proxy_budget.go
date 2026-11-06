@@ -256,15 +256,7 @@ func reserveOpenRouterWorkflowBudget(rig, workflow, path string, payload []byte,
 	}
 	limit := int64(math.Floor(budget * 1000000))
 	if err := reserveBudgetUnits(path+".usd", rig, workflow, units, limit, int64(math.Floor(rigBudget*1000000))); err != nil {
-		var exceeded *budgetLimitError
-		if errors.As(err, &exceeded) {
-			scope := "workflow"
-			if exceeded.workflow == "" {
-				scope = "rig"
-			}
-			return nil, nil, fmt.Errorf("execution budget exhausted: %s cost allowance $%.2f for %s/%s; accounted $%.6f plus next request reservation $%.6f (includes unsettled requests)", scope, float64(exceeded.limit)/1e6, rig, workflow, float64(exceeded.used)/1e6, float64(exceeded.requested)/1e6)
-		}
-		return nil, nil, err
+		return nil, nil, formatCostBudgetError(err, rig, workflow)
 	}
 	return encoded, &workflowCostReservation{path: path + ".usd", rig: rig, workflow: workflow, units: units}, nil
 }
@@ -290,4 +282,16 @@ func workflowBudgetPath() (string, error) {
 		return "", fmt.Errorf("execution budget: %w", err)
 	}
 	return filepath.Join(dir, "freeride", "execution-budgets.json"), nil
+}
+
+func formatCostBudgetError(err error, rig, workflow string) error {
+	var exceeded *budgetLimitError
+	if errors.As(err, &exceeded) {
+		scope := "workflow"
+		if exceeded.workflow == "" {
+			scope = "rig"
+		}
+		return fmt.Errorf("execution budget exhausted: %s cost allowance $%.2f for %s/%s; accounted $%.6f plus next request reservation $%.6f (includes unsettled requests)", scope, float64(exceeded.limit)/1e6, rig, workflow, float64(exceeded.used)/1e6, float64(exceeded.requested)/1e6)
+	}
+	return err
 }

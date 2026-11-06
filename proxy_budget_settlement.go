@@ -17,9 +17,17 @@ type workflowCostReservation struct {
 	units               int64
 	mu                  sync.Mutex
 	settled             bool
+	rates               *workflowTokenPrice
+	unknownPricing      bool
+	kind                string
+	coverageWritten     bool
 }
 
 func (r *workflowCostReservation) settleCost(cost float64) error {
+	return r.settleCostWithKind(cost, "reported")
+}
+
+func (r *workflowCostReservation) settleCostWithKind(cost float64, kind string) error {
 	if r == nil {
 		return nil
 	}
@@ -45,6 +53,7 @@ func (r *workflowCostReservation) settleCost(cost float64) error {
 	})
 	if err == nil {
 		r.settled = true
+		r.kind = kind
 	}
 	return err
 }
@@ -54,14 +63,26 @@ func (r *workflowCostReservation) settleResponse(body []byte) {
 		return
 	}
 	var response struct {
-		Usage struct {
-			Cost *float64 `json:"cost"`
-		} `json:"usage"`
+		Usage json.RawMessage `json:"usage"`
+		Groq  struct {
+			Usage json.RawMessage `json:"usage"`
+		} `json:"x_groq"`
 	}
-	if json.Unmarshal(body, &response) != nil || response.Usage.Cost == nil {
+	if json.Unmarshal(body, &response) != nil {
 		return
 	}
-	if err := r.settleCost(*response.Usage.Cost); err != nil {
+	raw := response.Usage
+	if len(raw) == 0 || string(raw) == "null" {
+		raw = response.Groq.Usage
+	}
+	cost, kind, known := accountingCostFromUsage(raw, r.rates)
+	if !known && r.rates != nil && *r.rates.Input == 0 && *r.rates.Output == 0 {
+		cost, kind, known = 0, "estimated", true
+	}
+	if !known {
+		return
+	}
+	if err := r.settleCostWithKind(cost, kind); err != nil {
 		log.Printf("[BUDGET] cost settlement failed for %s/%s: %v", r.rig, r.workflow, err)
 	}
 }
@@ -101,4 +122,40 @@ func (b *budgetUsageBody) Read(p []byte) (int, error) {
 		b.line = nil
 	}
 	return n, err
+}
+
+func (r *workflowCostReservation) accountingMode() string {
+	if r == nil {
+		return "not applicable"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.settled {
+		return r.kind
+	}
+	if r.unknownPricing {
+		return "unknown"
+	}
+	return "reserved"
+}
+
+func (r *workflowCostReservation) finishAccounting() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.coverageWritten {
+		return
+	}
+	kind := r.kind
+	if !r.settled {
+		kind = "unknown"
+	}
+	err := updateBudgetLedger(r.path+".coverage", func(ledger map[string]int64) error { ledger[budgetKey(r.rig, r.workflow, kind)]++; return nil })
+	if err != nil {
+		log.Printf("[BUDGET] coverage update failed: %v", err)
+		return
+	}
+	r.coverageWritten = true
 }

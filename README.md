@@ -1182,54 +1182,97 @@ MIT License.
 
 ### Workflow execution budgets
 
-Gastown agents now pass workflow and rig identity to FreeRide. Each upstream
-attempt, including a fallback, reserves a durable slot before dispatch. Defaults
-for identified workflows are 1000 upstream attempts, a $5 OpenRouter workflow
-allowance and a $20 OpenRouter allowance shared by workflows on the same rig.
-Known free routes do not consume the dollar allowance. These defaults apply only
-to requests carrying the workflow identity; they are not account-wide controls.
+Budgets belong to the **workflow and rig**, not the provider. Switching from
+OpenRouter to Cerebras, Groq, Gemini, NVIDIA, Cloudflare, or a local compatible
+endpoint does not create a fresh allowance. Each upstream attempt, including
+fallbacks, consumes the same durable request counter. The defaults are 1000
+upstream attempts, a $5 workflow cost allowance, and a $20 cost allowance shared
+by workflows on the same rig. Gas Town additionally enforces its provider-neutral
+request/token limits (`GT_WORKFLOW_MAX_LLM_REQUESTS`, default 1000, and
+`GT_WORKFLOW_MAX_LLM_TOKENS`, default 20000000). Dollar coverage depends on the
+provider's usage reporting and the pricing configured below.
 
-Configure the proxy process with:
+| Route | Dollar accounting |
+|-------|-------------------|
+| OpenRouter | Uses catalog prices and provider price caps for admission; settles to reported `usage.cost`. Known free routes consume no dollar allowance. |
+| Direct provider with `workflowPricing` | Reserves using configured prices; settles from token usage as an **estimate**. A reported `usage.cost` takes precedence. |
+| Explicit zero input **and** output prices | Treated as a configured free route; no inferred free tier or subscription assumptions. |
+| Unpriced direct provider | **Cost unknown**, never presented as free. Records reported cost when supplied, otherwise records an unknown-cost request. Request limits and Gas Town token limits still apply, but the dollar allowance cannot bound unknown charges. |
+| Interrupted response or missing usage on a priced route | Retains the reservation and records unknown accounting coverage rather than assuming zero cost. |
+
+Configure limits on the **proxy process**:
 
 ```bash
 export FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS=1000
 export FREERIDE_WORKFLOW_MAX_COST_USD=5
 export FREERIDE_RIG_MAX_COST_USD=20
+# OpenRouter admission price ceilings, not prices assigned to direct providers:
 export FREERIDE_MAX_PROMPT_USD_PER_MILLION=1
 export FREERIDE_MAX_COMPLETION_USD_PER_MILLION=5
-# Optional: choose a persistent location shared by proxy processes on this host.
+# Optional persistent location shared by proxy processes on this host:
 export FREERIDE_EXECUTION_BUDGET_PATH=/path/to/persistent/execution-budgets.json
 ```
 
-Without an explicit path, accounting lives in the operating system's user config
-directory under `freeride/execution-budgets.json`. The `.usd` companion ledger
-stores microdollars: reported costs for completed calls plus outstanding reservations.
-Both use process locks and atomic replacement. Completed OpenRouter responses
-(including streams) replace their reservation with `usage.cost`; confirmed
-pre-inference rejections release it. Interrupted calls or responses without cost
-usage retain their reservation because billing is unknown. Allowances persist
-across proxy restarts. Invalid or corrupt accounting stops identified workflow
-requests instead of assuming a fresh allowance.
+For direct providers, set prices in `models.yaml`, keyed by the **full routing
+model ID**, or a provider wildcard such as `cerebras/*`. Exact IDs take precedence.
+Both prices are required; zero must be explicit. Values below are illustrative,
+**not current provider tariffs**—use your own tier/contract prices from
+[Cerebras](https://www.cerebras.ai/pricing), [Groq](https://groq.com/pricing), or
+the relevant provider. No prices are guessed or copied between providers.
 
-OpenRouter text requests reserve a conservative input-byte/output-token cost.
-The proxy applies matching `provider.max_price` caps, retaining stricter caller
-caps and using lower catalog prices when known. Per-request/image charges,
-multiple completions, paid server tools and media are excluded from this policy.
-See [OpenRouter's provider price-cap contract](https://openrouter.ai/docs/guides/routing/provider-selection#max-price).
-A provider that changes prices above the cap should reject the request. This is
-local admission control for this proxy and supported text requests, not a
-substitute for provider account controls or a guarantee about external billing.
-Other providers currently receive attempt limits, not dollar accounting.
+```yaml
+workflowPricing:
+  "cerebras/YOUR_MODEL_ID":
+    inputUSDPerMillion: 1.0
+    outputUSDPerMillion: 2.0
+  "groq/YOUR_MODEL_ID":
+    inputUSDPerMillion: 0.5
+    outputUSDPerMillion: 1.0
+  "local/my-free-endpoint":
+    inputUSDPerMillion: 0
+    outputUSDPerMillion: 0
+```
 
-`--allow-paid` still permits paid routing; it does not bypass these controls.
-A 402/403 or exhausted budget pauses the identified gastown workflow. The pause
-reason is saved and shown by `gt mayor workflow status`, the terminal feed, and
-the web console, alongside the workflow's current phase. Inspect the reported
-cause and correct accounting or adjust the allowance as appropriate before
-resuming. Never delete ledgers
-while agents are active. Calls that omit or forge identity headers are outside
-this accounting boundary, so do not expose the proxy as an unauthenticated public
-service.
+Token-based amounts are estimates: provider discounts, caching, free allowances,
+and contract billing can differ. Paid non-token features and media require a
+separate pricing policy; configured direct text routes reject those features.
+The text policy permits one completion with at most 8192 output tokens. Cerebras
+and Groq streams request terminal usage; Groq's `x_groq.usage` is also recognized.
+Other compatible endpoints can use ordinary `usage` in JSON or SSE responses.
+OpenRouter-specific `provider.max_price` fields are never sent to direct providers.
+
+Inspect a workflow without making an inference request:
+
+```bash
+curl -s 'http://localhost:11434/api/budgets?rig=pwtest&workflow=wf-1'
+```
+
+The response includes `accounted_cost_usd` (settled costs/estimates plus outstanding
+reservations), `unknown_cost_requests`, `reported_requests`, `estimated_requests`,
+and the request count. `accounting` explicitly says **cost unknown** when any
+observed call lacks cost coverage. `X-Freeride-Cost-Accounting` on inference
+responses indicates `reported`, `estimated`, `reserved`, or `unknown`; streaming
+headers reflect admission-time knowledge, while the status endpoint reflects
+completed usage. Unpriced routes also emit a warning header and proxy log entry.
+Coverage counters describe calls observed after this feature was installed;
+older cost totals without coverage history are labelled as legacy accounting.
+
+Without an explicit path, ledgers live in the operating system's user config
+directory under `freeride/execution-budgets.json`. That file holds attempt counts;
+`.usd` holds microdollars and `.usd.coverage` holds accounting coverage counts.
+They use process locks and atomic replacement and persist across proxy restarts.
+Completed responses, including streams, replace their reservation with reported
+cost or a configured token estimate. Confirmed pre-inference rejections release
+it. Corrupt accounting stops identified workflow requests. Never delete ledgers
+while agents are active. Provider account-balance access is **not required**.
+
+`--allow-paid` permits paid routing but does not bypass limits. A 402/403 or an
+exhausted budget pauses the identified workflow. The saved reason appears in
+`gt mayor workflow status`, the terminal feed, and the web console alongside the
+current phase. Correct the reported cause before resuming; a resume does not
+reset the accounting or redo completed phases. These controls apply to requests
+carrying workflow identity, not to the entire provider account. Keep the proxy
+private: omitted or forged identity headers are outside this accounting boundary.
 
 See [gastown workflow recovery](gastown/docs/design/workflow-resilience.md) for
 checkpoint batching, agent-side token/request reservations, installation and

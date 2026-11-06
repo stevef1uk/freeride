@@ -441,3 +441,15 @@ localOpenAI:
 # - With OpenRouter credits, paid models work reliably (gpt-4o-mini, gemini-2.0-flash-001)
 # - NVIDIA models are always free and don't require credits
 # - Run with --allow-paid for paid fallbacks; --allow-local-openai for local fallback + weak-cloud block
+
+# Optional direct-provider workflow pricing. Prices are USD per million tokens,
+# keyed by the full routing ID (or e.g. "cerebras/*"). Both fields are required.
+# No entry means cost UNKNOWN, not free; request/Gas Town token limits still apply.
+# Examples only: replace the model ID and rates with your provider/tier prices.
+# workflowPricing:
+#   "cerebras/YOUR_MODEL_ID":
+#     inputUSDPerMillion: 1.0
+#     outputUSDPerMillion: 2.0
+#   "local/my-free-endpoint":
+#     inputUSDPerMillion: 0
+#     outputUSDPerMillion: 0

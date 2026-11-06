@@ -92,6 +92,7 @@ type modelClassificationConfig struct {
 }
 
 type modelsConfig struct {
+	WorkflowPricing             map[string]workflowTokenPrice     `yaml:"workflowPricing"`
 	CerebrasBudget              []string                          `yaml:"cerebrasBudget"`
 	CerebrasPerformance         []string                          `yaml:"cerebrasPerformance"`
 	GroqBudget                  []string                          `yaml:"groqBudget"`
@@ -143,10 +144,20 @@ func loadModelsConfig() {
 		return
 	}
 
-	if err := yaml.Unmarshal(data, &globalModelsConfig); err != nil {
+	var next modelsConfig
+	if err := yaml.Unmarshal(data, &next); err != nil {
 		log.Printf("[ERROR] Failed to parse models.yaml: %v", err)
 		return
 	}
+	for model, price := range next.WorkflowPricing {
+		if err := price.validate(); err != nil {
+			log.Printf("[ERROR] Invalid workflowPricing[%q]: %v; keeping previous config", model, err)
+			return
+		}
+	}
+	// Publish a fresh immutable snapshot, so removed prices do not survive reload
+	// and active requests never race with a map being updated in place.
+	globalModelsConfig = next
 	log.Printf("[INFO] Loaded %d Cerebras Budget, %d Cerebras Performance, %d Gemini direct, %d reliable free, %d NVIDIA, %d curated paid, %d IDE models, %d local OpenAI endpoints, %d role prepends, %d role local-first, %d local-excluded roles, %d local-GPU block ids, %d local-GPU block patterns, %d chat prefixes, %d tool-support markers, %d complex hints from config",
 		len(globalModelsConfig.CerebrasBudget), len(globalModelsConfig.CerebrasPerformance), len(globalModelsConfig.GeminiModels), len(globalModelsConfig.ReliableFree), len(globalModelsConfig.NvidiaReliable), len(globalModelsConfig.CuratedPaid), len(globalModelsConfig.IdeModels), len(globalModelsConfig.LocalOpenAI),
 		len(globalModelsConfig.RolePrepend), len(globalModelsConfig.RoleLocalFirst), len(globalModelsConfig.RoleLocalExclude), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Models), len(globalModelsConfig.BlockSmallCloudWhenLocalGPU.Patterns),
