@@ -1203,9 +1203,12 @@ export FREERIDE_EXECUTION_BUDGET_PATH=/path/to/persistent/execution-budgets.json
 
 Without an explicit path, accounting lives in the operating system's user config
 directory under `freeride/execution-budgets.json`. The `.usd` companion ledger
-stores reserved microdollars. Both use process locks and atomic replacement.
-Allowances persist across proxy restarts; errors and interrupted calls are not
-refunded automatically. Invalid or corrupt accounting stops identified workflow
+stores microdollars: reported costs for completed calls plus outstanding reservations.
+Both use process locks and atomic replacement. Completed OpenRouter responses
+(including streams) replace their reservation with `usage.cost`; confirmed
+pre-inference rejections release it. Interrupted calls or responses without cost
+usage retain their reservation because billing is unknown. Allowances persist
+across proxy restarts. Invalid or corrupt accounting stops identified workflow
 requests instead of assuming a fresh allowance.
 
 OpenRouter text requests reserve a conservative input-byte/output-token cost.
@@ -1219,8 +1222,11 @@ substitute for provider account controls or a guarantee about external billing.
 Other providers currently receive attempt limits, not dollar accounting.
 
 `--allow-paid` still permits paid routing; it does not bypass these controls.
-A 402/403 or exhausted budget pauses the identified gastown workflow. Inspect the
-cause and explicitly adjust its allowance before resuming. Never delete ledgers
+A 402/403 or exhausted budget pauses the identified gastown workflow. The pause
+reason is saved and shown by `gt mayor workflow status`, the terminal feed, and
+the web console, alongside the workflow's current phase. Inspect the reported
+cause and correct accounting or adjust the allowance as appropriate before
+resuming. Never delete ledgers
 while agents are active. Calls that omit or forge identity headers are outside
 this accounting boundary, so do not expose the proxy as an unauthenticated public
 service.

@@ -470,20 +470,23 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			outboundBody = bodyBytes
 		}
 
+		var costReservation *workflowCostReservation
 		if r.Header.Get("X-GasTown-Workflow") != "" && strings.HasPrefix(targetURL, "https://openrouter.ai/") {
 			budgetPath, pathErr := workflowBudgetPath()
 			if pathErr != nil {
 				http.Error(w, pathErr.Error(), http.StatusPaymentRequired)
 				return
 			}
-			bounded, budgetErr := applyOpenRouterWorkflowBudget(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow"), budgetPath, outboundBody, models)
+			bounded, reservation, budgetErr := reserveOpenRouterWorkflowBudget(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow"), budgetPath, outboundBody, models)
 			if budgetErr != nil {
 				http.Error(w, budgetErr.Error(), http.StatusPaymentRequired)
 				return
 			}
 			outboundBody = bounded
+			costReservation = reservation
 		}
 		if err := admitWorkflowUpstream(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow")); err != nil {
+			_ = costReservation.settleCost(0)
 			http.Error(w, err.Error(), http.StatusPaymentRequired)
 			return
 		}
@@ -491,6 +494,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		upCtx, upCancel := context.WithTimeout(r.Context(), upstreamTimeout)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
+			_ = costReservation.settleCost(0)
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)
 			upCancel()
 			continue
@@ -553,6 +557,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 			// Log error body
 			errorBody, _ := ioutil.ReadAll(resp.Body)
+			costReservation.settleResponse(errorBody)
+			switch resp.StatusCode {
+			case 400, 401, 402, 403, 404, 429:
+				// These requests were rejected before inference. Unknown server/transport
+				// failures retain their reservation because billing cannot be established.
+				if err := costReservation.settleCost(0); err != nil {
+					log.Printf("[BUDGET] rejected request settlement failed: %v", err)
+				}
+			}
 			log.Printf("[ERROR] Model %s response body: %s", candidate, string(errorBody))
 			resp.Body.Close()
 
@@ -612,10 +625,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Failed to read upstream body; see Freeride logs for details", http.StatusBadGateway)
 				return
 			}
+			costReservation.settleResponse(body)
 			resp.Body = io.NopCloser(bytes.NewReader(body))
 			resp.Header.Del("Content-Encoding")
 			resp.Header.Del("Content-Length")
 			resp.ContentLength = int64(len(body))
+		}
+
+		if isStream && costReservation != nil {
+			resp.Body = &budgetUsageBody{ReadCloser: resp.Body, reservation: costReservation}
 		}
 
 		// For non-streaming requests, success means the complete body was read.
