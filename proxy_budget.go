@@ -116,13 +116,9 @@ func admitWorkflowUpstream(rig, workflow string) error {
 	if workflow == "" {
 		return nil
 	}
-	limit := int64(1000)
-	if raw := os.Getenv("FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS"); raw != "" {
-		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("execution budget: invalid FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS")
-		}
-		limit = n
+	limit, err := workflowUpstreamAttemptLimit()
+	if err != nil {
+		return err
 	}
 	path, err := workflowBudgetPath()
 	if err != nil {
@@ -294,4 +290,16 @@ func formatCostBudgetError(err error, rig, workflow string) error {
 		return fmt.Errorf("execution budget exhausted: %s cost allowance $%.2f for %s/%s; accounted $%.6f plus next request reservation $%.6f (includes unsettled requests)", scope, float64(exceeded.limit)/1e6, rig, workflow, float64(exceeded.used)/1e6, float64(exceeded.requested)/1e6)
 	}
 	return err
+}
+
+func workflowUpstreamAttemptLimit() (int64, error) {
+	limit := int64(1000)
+	if raw := os.Getenv("FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("execution budget: invalid FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS")
+		}
+		limit = n
+	}
+	return limit, nil
 }

@@ -1247,6 +1247,16 @@ Inspect a workflow without making an inference request:
 curl -s 'http://localhost:11434/api/budgets?rig=pwtest&workflow=wf-1'
 ```
 
+`gt feed` displays these figures and limits under each workflow, refreshing every
+10 seconds. A local configured proxy is discovered automatically; set
+`GT_BUDGET_STATUS_URL` for a remote budget status endpoint. Rebuild/install Gastown
+and restart Freeride after upgrading. The feed also shows Gastown request/token
+reservations and their limits; these are separate from dollar spend.
+
+The API includes `rig_accounted_cost_usd` and `rig_allowance_usd` in addition to
+workflow totals and limits, plus `upstream_attempt_limit` for retry/fallback attempts.
+These are ledger amounts, not provider account credits.
+
 The response includes `accounted_cost_usd` (settled costs/estimates plus outstanding
 reservations), `unknown_cost_requests`, `reported_requests`, `estimated_requests`,
 and the request count. `accounting` explicitly says **cost unknown** when any
