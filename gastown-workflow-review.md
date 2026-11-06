@@ -169,3 +169,29 @@ transactional multi-store/worker-lease migration and full independent component
 verification/environment adapters. These are not claimed complete by the patch.
 Operational instructions and compatibility limits are documented in
 `gastown/docs/design/workflow-resilience.md` and the FreeRide README.
+
+## Follow-up: complete make test validation
+
+The full gastown `make test` target now passes without test-name exclusions.
+The earlier macOS shell failures have been fixed with portable sed syntax,
+startup readiness checks and comparison against the shell's actual failed-cd
+status. Session unit tests use an absent-session provider instead of requiring
+installed tmux. Worktree unit tests inject disk admission rather than depending
+on host free space, while production disk checks remain enforced.
+
+The investigation also fixed a real rollback defect: low-disk rejection after
+name allocation left the polecat name and pending marker reserved. Those are now
+released on early failure, with a targeted regression test. Python environment
+bootstrap has a one-minute default deadline and a caller-context variant; tests
+select the interpreter they validated instead of inheriting a user pyenv shim.
+A bd-argument unit test now uses a capturing stub rather than accidentally
+starting a real Dolt server.
+
+Live Beads/Dolt fixtures require the existing GT_DOLT_TESTS=1 opt-in and remain
+available through make test-integration. The fixture whose warning diagnostics
+corrupted its JSON assertion was also run explicitly with the real CLI and
+passed after separating stdout from stderr. The full external integration suite
+was not run. Package concurrency and nested cross-build concurrency are bounded;
+all six cross-platform compilation checks remain enabled. About 4 GB of temporary
+build artifacts created during this investigation were removed. No paid model
+calls or remote rig deployments were performed.
