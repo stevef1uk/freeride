@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +55,36 @@ func TestDirectReportedCostOverridesTokenEstimate(t *testing.T) {
 	r.settleResponse([]byte(`{"usage":{"cost":0.00001,"prompt_tokens":1000,"completion_tokens":100}}`))
 	if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != 10 {
 		t.Fatal(got)
+	}
+}
+
+func TestDirectProviderWorkflowDollarOverrideAndStatus(t *testing.T) {
+	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")
+	path := filepath.Join(t.TempDir(), "budget.json")
+	if err := os.WriteFile(path+".limits", []byte(`{"[\"rig\",\"wf\"]":10000000}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, reservation, err := reserveProviderWorkflowBudget(
+		"rig", "wf", path,
+		[]byte(`{"max_tokens":8192}`),
+		"cerebras/model", "https://api.cerebras.ai/v1/chat/completions",
+		nil, map[string]workflowTokenPrice{"cerebras/model": {Input: rate(1), Output: rate(2)}},
+	)
+	if err != nil {
+		t.Fatalf("workflow override was not applied: %v", err)
+	}
+	reservation.settleResponse([]byte(`{"usage":{"prompt_tokens":10,"completion_tokens":10}}`))
+	reservation.finishAccounting()
+
+	t.Setenv("FREERIDE_EXECUTION_BUDGET_PATH", path)
+	rec := httptest.NewRecorder()
+	handleWorkflowBudgetStatus(rec, httptest.NewRequest("GET", "/api/budgets?rig=rig&workflow=wf", nil))
+	var status map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || status["workflow_allowance_usd"] != float64(10) {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -80,6 +80,11 @@ func handleWorkflowBudgetStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 503)
 		return
 	}
+	limit, err = workflowCostLimit(path, rig, workflow, limit)
+	if err != nil {
+		http.Error(w, err.Error(), 503)
+		return
+	}
 	status["workflow_allowance_usd"] = limit
 	rigLimit, err := budgetFloat("FREERIDE_RIG_MAX_COST_USD", 20)
 	if err != nil {

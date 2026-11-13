@@ -48,7 +48,7 @@ func reserveProviderWorkflowBudget(rig, workflow, path string, payload []byte, c
 	}
 	r := &workflowCostReservation{path: path + ".usd", rig: rig, workflow: workflow, unknownPricing: !priced}
 	if !priced {
-		if err := checkKnownWorkflowCost(path+".usd", rig, workflow); err != nil {
+		if err := checkKnownWorkflowCost(path, rig, workflow); err != nil {
 			return nil, nil, err
 		}
 		log.Printf("[BUDGET] %s/%s model=%s: cost unknown; no workflowPricing configured. Request limits and Gas Town token limits remain active; dollar allowance cannot bound unpriced calls.", rig, workflow, candidate)
@@ -129,6 +129,10 @@ func reserveProviderWorkflowBudget(rig, workflow, path string, payload []byte, c
 		if err != nil {
 			return nil, nil, err
 		}
+		workflowLimit, err = workflowCostLimit(path, rig, workflow, workflowLimit)
+		if err != nil {
+			return nil, nil, err
+		}
 		rigLimit, err := budgetFloat("FREERIDE_RIG_MAX_COST_USD", 20)
 		if err != nil {
 			return nil, nil, err
@@ -183,11 +187,15 @@ func checkKnownWorkflowCost(path, rig, workflow string) error {
 	if err != nil {
 		return err
 	}
+	workflowLimit, err = workflowCostLimit(path, rig, workflow, workflowLimit)
+	if err != nil {
+		return err
+	}
 	rigLimit, err := budgetFloat("FREERIDE_RIG_MAX_COST_USD", 20)
 	if err != nil {
 		return err
 	}
-	err = updateBudgetLedger(path, func(ledger map[string]int64) error {
+	err = updateBudgetLedger(path+".usd", func(ledger map[string]int64) error {
 		for _, item := range []struct {
 			key   string
 			limit int64

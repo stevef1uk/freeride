@@ -70,6 +70,21 @@ func TestOpenRouterCostReservationAndProviderCaps(t *testing.T) {
 	}
 }
 
+func TestOpenRouterWorkflowDollarOverride(t *testing.T) {
+	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")
+	path := filepath.Join(t.TempDir(), "budget.json")
+	if err := os.WriteFile(path+".limits", []byte(`{"[\"rig\",\"wf\"]":10000000}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"model":"sample","messages":[{"role":"user","content":"hello"}],"max_tokens":8192}`)
+	if _, err := applyOpenRouterWorkflowBudget("rig", "wf", path, payload); err != nil {
+		t.Fatalf("workflow override was not applied: %v", err)
+	}
+	if _, err := applyOpenRouterWorkflowBudget("rig", "wf", path, payload); err != nil {
+		t.Fatalf("override was not applied to subsequent reservations: %v", err)
+	}
+}
+
 func TestOpenRouterCostPolicyRejectsUnaccountedCharges(t *testing.T) {
 	for _, payload := range []string{
 		`{"n":2}`, `{"plugins":[]}`, `{"messages":[{"content":[{"type":"image_url"}]}]}`, `{"tools":[{"type":"web_search"}]}`, `{"max_tokens":9000}`,

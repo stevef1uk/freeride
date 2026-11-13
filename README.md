@@ -1213,6 +1213,23 @@ export FREERIDE_MAX_COMPLETION_USD_PER_MILLION=5
 export FREERIDE_EXECUTION_BUDGET_PATH=/path/to/persistent/execution-budgets.json
 ```
 
+For a one-workflow adjustment, use Gas Town's command instead of changing
+process-wide defaults:
+
+```bash
+gt mayor workflow budget wf-1 --tokens 40000000 --usd 10
+```
+
+Either option may be used independently. The command leaves global defaults and
+other workflows unchanged. Token overrides are stored in the Gas Town workflow
+ledger; dollar overrides are stored in `execution-budgets.json.limits` beside
+the proxy ledger and apply to OpenRouter and priced direct-provider calls. The
+proxy reads dollar overrides for each admission and status request, so no proxy
+restart is needed. If the proxy ledger uses a custom path, run the command on
+the proxy host with `--freeride-budget-path /path/to/execution-budgets.json`.
+Per-workflow dollar overrides do not change the shared rig allowance, unknown
+provider costs, or provider account limits.
+
 For direct providers, set prices in `models.yaml`, keyed by the **full routing
 model ID**, or a provider wildcard such as `cerebras/*`. Exact IDs take precedence.
 Both prices are required; zero must be explicit. Values below are illustrative,

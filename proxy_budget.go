@@ -143,6 +143,10 @@ func reserveOpenRouterWorkflowBudget(rig, workflow, path string, payload []byte,
 	if err != nil {
 		return nil, nil, err
 	}
+	budget, err = workflowCostLimit(path, rig, workflow, budget)
+	if err != nil {
+		return nil, nil, err
+	}
 	rigBudget, err := budgetFloat("FREERIDE_RIG_MAX_COST_USD", 20)
 	if err != nil {
 		return nil, nil, err
@@ -267,6 +271,35 @@ func budgetFloat(name string, fallback float64) (float64, error) {
 		return 0, fmt.Errorf("execution budget: %s must be a positive finite amount <= 1000000", name)
 	}
 	return n, nil
+}
+
+func workflowCostLimit(path, rig, workflow string, fallback float64) (float64, error) {
+	data, err := os.ReadFile(path + ".limits")
+	if os.IsNotExist(err) {
+		return fallback, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("execution budget: read workflow limits: %w", err)
+	}
+	limits := map[string]int64{}
+	if err := json.Unmarshal(data, &limits); err != nil {
+		return 0, fmt.Errorf("execution budget: corrupt workflow limits: %w", err)
+	}
+	if limits == nil {
+		return 0, fmt.Errorf("execution budget: null workflow limits")
+	}
+	for _, limit := range limits {
+		if limit < 0 || limit > 1000000000000 {
+			return 0, fmt.Errorf("execution budget: invalid workflow dollar limit")
+		}
+	}
+	if limit, ok := limits[budgetKey(rig, workflow)]; ok {
+		if limit == 0 {
+			return 0, fmt.Errorf("execution budget: workflow dollar limit must be positive")
+		}
+		return float64(limit) / 1000000, nil
+	}
+	return fallback, nil
 }
 
 func workflowBudgetPath() (string, error) {
