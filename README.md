@@ -1187,10 +1187,36 @@ OpenRouter to Cerebras, Groq, Gemini, NVIDIA, Cloudflare, or a local compatible
 endpoint does not create a fresh allowance. Each upstream attempt, including
 fallbacks, consumes the same durable request counter. The defaults are 1000
 upstream attempts, a $5 workflow cost allowance, and a $20 cost allowance shared
-by workflows on the same rig. Gas Town additionally enforces its provider-neutral
-request/token limits (`GT_WORKFLOW_MAX_LLM_REQUESTS`, default 1000, and
-`GT_WORKFLOW_MAX_LLM_TOKENS`, default 20000000). Dollar coverage depends on the
-provider's usage reporting and the pricing configured below.
+by workflows on the same rig. Gas Town additionally enforces provider-neutral
+request/token limits. These are independent of Freeride's proxy-attempt and
+dollar limits:
+
+| Limit | Environment variable | Default | Set it in |
+|-------|----------------------|---------|-----------|
+| Gas Town workflow LLM requests | `GT_WORKFLOW_MAX_LLM_REQUESTS` | 1000 | The environment of the Gas Town agent/worker process |
+| Gas Town reserved tokens | `GT_WORKFLOW_MAX_LLM_TOKENS` | 20000000 | The environment of the Gas Town agent/worker process |
+| Freeride workflow upstream attempts (including retries/fallbacks) | `FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS` | 1000 | The Freeride proxy process |
+
+For example, to increase these limits to 3000 requests/attempts, set the relevant
+variables **before starting the corresponding process**:
+
+```bash
+# Gas Town agent/worker environment:
+export GT_WORKFLOW_MAX_LLM_REQUESTS=3000
+
+# Freeride proxy environment (set this in the proxy's service/container config
+# if the proxy is managed separately):
+export FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS=3000
+```
+
+Changing a shell's environment does not alter an agent or proxy that is already
+running; restart the process whose limit you changed. After changing the Gas Town
+request limit, explicitly resume a budget-paused workflow, for example
+`gt mayor workflow resume wf-3`. Existing usage is retained, and new Gas Town
+admissions persist the enforcing request/token limits in the workflow ledger.
+Freeride upstream attempts are counted separately from Gas Town LLM requests.
+Dollar coverage depends on the provider's usage reporting and the pricing
+configured below.
 
 | Route | Dollar accounting |
 |-------|-------------------|
@@ -1200,7 +1226,8 @@ provider's usage reporting and the pricing configured below.
 | Unpriced direct provider | **Cost unknown**, never presented as free. Records reported cost when supplied, otherwise records an unknown-cost request. Request limits and Gas Town token limits still apply, but the dollar allowance cannot bound unknown charges. |
 | Interrupted response or missing usage on a priced route | Retains the reservation and records unknown accounting coverage rather than assuming zero cost. |
 
-Configure limits on the **proxy process**:
+Configure dollar and upstream-attempt limits on the **Freeride proxy process**
+(these do not change Gas Town's own request/token limits):
 
 ```bash
 export FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS=1000
