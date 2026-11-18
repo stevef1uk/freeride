@@ -67,10 +67,9 @@ rolePrepend:
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/llama-3.3-70b"
   qa:
-    # OpenRouter catalog + small bug-review probes checked 2026-11-04.
-    # $/1M input/output: GLM .0269/.0996, Haiku .10/.50 (<100k input),
-    # DeepSeek V4.1 Flash .045/.50. All support tools and ~1M context.
-    - "z-ai/glm-5.3-flash"
+    # Keep the structured-outcome reviewer on DeepSeek; GLM returned empty
+    # assistant content for design_review (2026-11-18).
+    - "deepseek/deepseek-v4-flash"
     - "anthropic/claude-haiku-5.5"
     - "deepseek/deepseek-v4.1-flash"
     - "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -295,6 +294,7 @@ curatedPaid:
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
+  - "z-ai/glm-5.3-flash"                 # Empty assistant content in structured workflow reviews (2026-11-18)
   - "google/gemma-4-26b-a4b-it:free"      # Currently broken 401
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
