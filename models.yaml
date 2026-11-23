@@ -58,6 +58,7 @@ rolePrepend:
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/llama-3.3-70b"
   architect:
+    - "google/gemini-3.6-flash"
     - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
