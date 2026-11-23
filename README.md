@@ -951,13 +951,12 @@ on **2026-11-04**. Prices below are USD per million tokens, before caching:
 
 | Model | Input | Output | Context |
 | --- | ---: | ---: | ---: |
-| `z-ai/glm-5.3-flash` | $0.0269 | $0.0996 | 1,048,576 |
 | `anthropic/claude-haiku-5.5` | $0.10 | $0.50 | 1,000,000 |
 | `deepseek/deepseek-v4.1-flash` | $0.045 | $0.50 | 1,048,576 |
 | `minimax/minimax-m3.1-flash` | $0.15 | $0.60 | 1,048,576 |
 
 Haiku's catalog rates rise to $0.50/$2.50 above 100,000 input tokens. MiniMax has
-time-dependent discounts. Reasoning tokens are billed as output. GLM, Haiku, and
+time-dependent discounts. Reasoning tokens are billed as output. Haiku and
 DeepSeek each correctly identified a planted inverted-boolean bug in a small live
 review probe; this verifies availability and basic review behavior, not broad QA
 quality. NVIDIA Nemotron 3.5 Super VL 120B remains another alternative, backed by
