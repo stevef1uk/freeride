@@ -193,7 +193,6 @@ func TestBudgetStatusIncludesRigAllowance(t *testing.T) {
 	t.Setenv("FREERIDE_EXECUTION_BUDGET_PATH", path)
 	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "5")
 	t.Setenv("FREERIDE_RIG_MAX_COST_USD", "20")
-	t.Setenv("FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS", "12")
 	if err := updateBudgetLedger(path+".usd", func(ledger map[string]int64) error {
 		ledger[budgetKey("rig", "wf")] = 480000
 		ledger[budgetKey("rig")] = 1250000
@@ -207,7 +206,7 @@ func TestBudgetStatusIncludesRigAllowance(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || status["rig_allowance_usd"] != float64(20) || status["rig_accounted_cost_usd"] != 1.25 || status["workflow_allowance_usd"] != float64(5) || status["upstream_attempt_limit"] != float64(12) {
+	if rec.Code != 200 || status["rig_allowance_usd"] != float64(20) || status["rig_accounted_cost_usd"] != 1.25 || status["workflow_allowance_usd"] != float64(5) {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }

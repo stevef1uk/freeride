@@ -4,45 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
-	"sync/atomic"
 	"testing"
 )
-
-func TestProxyBudgetBoundsConcurrentFallbackAttempts(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "budget.json")
-	var admitted int32
-	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if reserveUpstreamAttempt(path, "rig", "wf", 5) == nil {
-				atomic.AddInt32(&admitted, 1)
-			}
-		}()
-	}
-	wg.Wait()
-	if admitted != 5 {
-		t.Fatalf("admitted=%d", admitted)
-	}
-	if reserveUpstreamAttempt(path, "rig", "wf", 5) == nil {
-		t.Fatal("persisted limit lost")
-	}
-	if err := reserveUpstreamAttempt(path, "other", "wf", 5); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestProxyBudgetFailsClosedOnCorruptLedger(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "budget.json")
-	if err := os.WriteFile(path, []byte("broken"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if reserveUpstreamAttempt(path, "rig", "wf", 5) == nil {
-		t.Fatal("corruption admitted a call")
-	}
-}
 
 func TestOpenRouterCostReservationAndProviderCaps(t *testing.T) {
 	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")

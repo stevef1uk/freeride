@@ -55,22 +55,10 @@ func handleWorkflowBudgetStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot read accounting coverage", 503)
 		return
 	}
-	attempts, err := read(path)
-	if err != nil {
-		http.Error(w, "cannot read attempt ledger", 503)
-		return
-	}
 	status := budgetCoverageSummary(coverage, rig, workflow)
 	status["rig"] = rig
 	status["workflow"] = workflow
 	status["accounted_cost_usd"] = float64(dollars[budgetKey(rig, workflow)]) / 1e6
-	status["upstream_attempts"] = attempts[budgetKey(rig, workflow)]
-	attemptLimit, err := workflowUpstreamAttemptLimit()
-	if err != nil {
-		http.Error(w, err.Error(), 503)
-		return
-	}
-	status["upstream_attempt_limit"] = attemptLimit
 
 	if status["accounting"] == "no completed priced calls" && dollars[budgetKey(rig, workflow)] > 0 {
 		status["accounting"] = "legacy accounted cost; provider coverage history unavailable"

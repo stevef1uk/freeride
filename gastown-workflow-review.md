@@ -133,12 +133,12 @@ Reference specifications: [testgt3](https://github.com/stevef1uk/testgt3/blob/ma
 ## Implementation follow-through
 
 The subsequent patch implements non-destructive session yields with eight-bead
-execution batches, durable attempt limits, preserved checkpoint metadata,
-workflow-scoped request/token admission and proxy-side fallback admission. The
-proxy also reserves an OpenRouter text-inference dollar allowance (default $5
-per workflow/$20 shared per rig) and submits corresponding provider price caps.
-Reservations survive restarts and are not automatically refunded. This policy
-bounds this proxy's supported requests; it is not an external billing guarantee.
+execution batches, durable attempt limits, preserved checkpoint metadata, and
+workflow-scoped token admission. The proxy also reserves an OpenRouter
+text-inference dollar allowance (default $5 per workflow/$20 shared per rig) and
+submits corresponding provider price caps. Reservations survive restarts and are
+not automatically refunded. This policy bounds this proxy's supported requests;
+it is not an external billing guarantee.
 
 Additional fixes cover permanent billing/authentication failures, Retry-After,
 usage/identity logging, last-progress timestamps and source fingerprints,

@@ -1183,56 +1183,37 @@ MIT License.
 
 Budgets belong to the **workflow and rig**, not the provider. Switching from
 OpenRouter to Cerebras, Groq, Gemini, NVIDIA, Cloudflare, or a local compatible
-endpoint does not create a fresh allowance. Each upstream attempt, including
-fallbacks, consumes the same durable request counter. The defaults are 1000
-upstream attempts, a $5 workflow cost allowance, and a $20 cost allowance shared
-by workflows on the same rig. Gas Town additionally enforces provider-neutral
-request/token limits. These are independent of Freeride's proxy-attempt and
-dollar limits:
+endpoint does not create a fresh allowance. The defaults are a $5 workflow cost
+allowance and a $20 cost allowance shared by workflows on the same rig. Gas Town
+additionally enforces a provider-neutral reserved-token limit:
 
 | Limit | Environment variable | Default | Set it in |
 |-------|----------------------|---------|-----------|
-| Gas Town workflow LLM requests | `GT_WORKFLOW_MAX_LLM_REQUESTS` | 1000 | The environment of the Gas Town agent/worker process |
 | Gas Town reserved tokens | `GT_WORKFLOW_MAX_LLM_TOKENS` | 20000000 | The environment of the Gas Town agent/worker process |
-| Freeride workflow upstream attempts (including retries/fallbacks) | `FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS` | 1000 | The Freeride proxy process |
 
-For example, to increase these limits to 3000 requests/attempts, set the relevant
-variables **before starting the corresponding process**:
-
-```bash
-# Gas Town agent/worker environment:
-export GT_WORKFLOW_MAX_LLM_REQUESTS=3000
-
-# Freeride proxy environment (set this in the proxy's service/container config
-# if the proxy is managed separately):
-export FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS=3000
-```
-
-Changing a shell's environment does not alter an agent or proxy that is already
-running; restart the process whose limit you changed. Gas Town persists the
-request/token limits used by each workflow: after an agent restart, the recorded
-limit remains effective when its environment variable is unset. An explicit
+To increase the token limit, set `GT_WORKFLOW_MAX_LLM_TOKENS` in the Gas Town
+agent/worker environment **before starting the process**. Changing a shell's
+environment does not alter an agent that is already running. Gas Town persists
+the token limit used by each workflow: after an agent restart, the recorded
+limit remains effective when the environment variable is unset. An explicit
 environment value overrides the recorded limit; a per-workflow token override
-set with `gt mayor workflow budget --tokens` takes precedence for tokens. After
-changing a Gas Town limit, explicitly resume a budget-paused workflow, for example
-`gt mayor workflow resume wf-3`. Existing usage is retained.
-Freeride upstream attempts are counted separately from Gas Town LLM requests.
-Dollar coverage depends on the provider's usage reporting and the pricing
-configured below.
+set with `gt mayor workflow budget --tokens` takes precedence. After changing a
+Gas Town limit, explicitly resume a budget-paused workflow, for example
+`gt mayor workflow resume wf-3`. Existing usage is retained. Dollar coverage
+depends on the provider's usage reporting and the pricing configured below.
 
 | Route | Dollar accounting |
 |-------|-------------------|
 | OpenRouter | Uses catalog prices and provider price caps for admission; settles to reported `usage.cost`. Known free routes consume no dollar allowance. |
 | Direct provider with `workflowPricing` | Reserves using configured prices; settles from token usage as an **estimate**. A reported `usage.cost` takes precedence. |
 | Explicit zero input **and** output prices | Treated as a configured free route; no inferred free tier or subscription assumptions. |
-| Unpriced direct provider | **Cost unknown**, never presented as free. Records reported cost when supplied, otherwise records an unknown-cost request. Request limits and Gas Town token limits still apply, but the dollar allowance cannot bound unknown charges. |
+| Unpriced direct provider | **Cost unknown**, never presented as free. Records reported cost when supplied, otherwise records an unknown-cost request. Gas Town token limits still apply, but the dollar allowance cannot bound unknown charges. |
 | Interrupted response or missing usage on a priced route | Retains the reservation and records unknown accounting coverage rather than assuming zero cost. |
 
-Configure dollar and upstream-attempt limits on the **Freeride proxy process**
-(these do not change Gas Town's own request/token limits):
+Configure dollar limits on the **Freeride proxy process** (these do not change
+Gas Town's own token limit):
 
 ```bash
-export FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS=1000
 export FREERIDE_WORKFLOW_MAX_COST_USD=5
 export FREERIDE_RIG_MAX_COST_USD=20
 # OpenRouter admission price ceilings, not prices assigned to direct providers:
@@ -1296,12 +1277,11 @@ curl -s 'http://localhost:11434/api/budgets?rig=pwtest&workflow=wf-1'
 `gt feed` displays these figures and limits under each workflow, refreshing every
 10 seconds. A local configured proxy is discovered automatically; set
 `GT_BUDGET_STATUS_URL` for a remote budget status endpoint. Rebuild/install Gastown
-and restart Freeride after upgrading. The feed also shows Gastown request/token
-reservations and their limits; these are separate from dollar spend.
+and restart Freeride after upgrading. The feed also shows Gas Town reserved
+tokens and their limit; these are separate from dollar spend.
 
 The API includes `rig_accounted_cost_usd` and `rig_allowance_usd` in addition to
-workflow totals and limits, plus `upstream_attempt_limit` for retry/fallback attempts.
-These are ledger amounts, not provider account credits.
+workflow totals and limits. These are ledger amounts, not provider account credits.
 
 The response includes `accounted_cost_usd` (settled costs/estimates plus outstanding
 reservations), `unknown_cost_requests`, `reported_requests`, `estimated_requests`,
@@ -1314,9 +1294,9 @@ Coverage counters describe calls observed after this feature was installed;
 older cost totals without coverage history are labelled as legacy accounting.
 
 Without an explicit path, ledgers live in the operating system's user config
-directory under `freeride/execution-budgets.json`. That file holds attempt counts;
-`.usd` holds microdollars and `.usd.coverage` holds accounting coverage counts.
-They use process locks and atomic replacement and persist across proxy restarts.
+directory under `freeride/execution-budgets.json`. `.usd` holds microdollars and
+`.usd.coverage` holds accounting coverage counts. They use process locks and
+atomic replacement and persist across proxy restarts.
 Completed responses, including streams, replace their reservation with reported
 cost or a configured token estimate. Confirmed pre-inference rejections release
 it. Corrupt accounting stops identified workflow requests. Never delete ledgers
@@ -1331,5 +1311,5 @@ carrying workflow identity, not to the entire provider account. Keep the proxy
 private: omitted or forged identity headers are outside this accounting boundary.
 
 See [gastown workflow recovery](gastown/docs/design/workflow-resilience.md) for
-checkpoint batching, agent-side token/request reservations, installation and
-remaining architectural work.
+checkpoint batching, agent-side token reservations, installation and remaining
+architectural work.

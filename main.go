@@ -488,11 +488,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				defer reservation.finishAccounting()
 			}
 		}
-		if err := admitWorkflowUpstream(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow")); err != nil {
-			_ = costReservation.settleCost(0)
-			http.Error(w, err.Error(), http.StatusPaymentRequired)
-			return
-		}
 		upstreamTimeout := upstreamRequestTimeout(candidate)
 		upCtx, upCancel := context.WithTimeout(r.Context(), upstreamTimeout)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
