@@ -1,0 +1,163 @@
+- generic [active] [ref=f2e1]:
+  - main [ref=f2e2]:
+    - generic [ref=f2e3]:
+      - generic [ref=f2e4]:
+        - paragraph [ref=f2e5]: FinAlly
+        - heading "Trading dashboard" [level=1] [ref=f2e6]
+        - paragraph [ref=f2e7]: Track your portfolio and follow live market prices in one focused view.
+      - generic [ref=f2e8]:
+        - generic [ref=f2e9]: Live
+        - generic [ref=f2e11]: Cash $8,668.32
+    - region "$9,998.46" [ref=f2e300]:
+      - generic [ref=f2e13]:
+        - paragraph [ref=f2e14]: Portfolio value
+        - heading "$9,998.46" [level=2] [ref=f2e301]
+        - paragraph [ref=f2e16]: "-$1.54 today · -0.02%"
+      - generic [ref=f2e17]:
+        - generic [ref=f2e18]: Open positions
+        - strong [ref=f2e19]: "2"
+      - generic [ref=f2e20]:
+        - generic [ref=f2e21]: Trades
+        - strong [ref=f2e22]: "2"
+    - status [ref=f2e175]: Removed PYPL from the watchlist.
+    - generic [ref=f2e23]:
+      - region "Live market prices" [ref=f2e24]:
+        - generic [ref=f2e26]:
+          - paragraph [ref=f2e27]: Market watch
+          - heading "Live market prices" [level=2] [ref=f2e28]
+        - generic [ref=f2e29]:
+          - textbox "Add ticker" [ref=f2e30]
+          - button "Add" [ref=f2e31] [cursor=pointer]
+        - list "Tracked tickers" [ref=f2e32]:
+          - listitem [ref=f2e33]:
+            - button "AAPL $190.04 +0.95%" [ref=f2e302] [cursor=pointer]:
+              - generic [ref=f2e35]: AAPL
+              - generic [ref=f2e37]: $190.04
+              - generic [ref=f2e38]: +0.95%
+            - button "Remove AAPL" [ref=f2e39] [cursor=pointer]: ×
+          - listitem [ref=f2e40]:
+            - button "MSFT $424.12 +1.48%" [ref=f2e303] [cursor=pointer]:
+              - generic [ref=f2e42]: MSFT
+              - generic [ref=f2e44]: $424.12
+              - generic [ref=f2e45]: +1.48%
+            - button "Remove MSFT" [ref=f2e46] [cursor=pointer]: ×
+          - listitem [ref=f2e47]:
+            - button "GOOGL $174.66 +0.01%" [ref=f2e304] [cursor=pointer]:
+              - generic [ref=f2e49]: GOOGL
+              - generic [ref=f2e51]: $174.66
+              - generic [ref=f2e52]: +0.01%
+            - button "Remove GOOGL" [ref=f2e53] [cursor=pointer]: ×
+          - listitem [ref=f2e54]:
+            - button "AMZN $186.63 +1.12%" [ref=f2e305] [cursor=pointer]:
+              - generic [ref=f2e56]: AMZN
+              - generic [ref=f2e58]: $186.63
+              - generic [ref=f2e59]: +1.12%
+            - button "Remove AMZN" [ref=f2e60] [cursor=pointer]: ×
+          - listitem [ref=f2e61]:
+            - button "NVDA $126.65 +1.28%" [ref=f2e306] [cursor=pointer]:
+              - generic [ref=f2e63]: NVDA
+              - generic [ref=f2e65]: $126.65
+              - generic [ref=f2e66]: +1.28%
+            - button "Remove NVDA" [ref=f2e67] [cursor=pointer]: ×
+          - listitem [ref=f2e68]:
+            - button "TSLA $251.41 +1.81%" [ref=f2e307] [cursor=pointer]:
+              - generic [ref=f2e70]: TSLA
+              - generic [ref=f2e72]: $251.41
+              - generic [ref=f2e73]: +1.81%
+            - button "Remove TSLA" [ref=f2e74] [cursor=pointer]: ×
+          - listitem [ref=f2e75]:
+            - button "META $568.57 +1.09%" [ref=f2e308] [cursor=pointer]:
+              - generic [ref=f2e77]: META
+              - generic [ref=f2e79]: $568.57
+              - generic [ref=f2e80]: +1.09%
+            - button "Remove META" [ref=f2e81] [cursor=pointer]: ×
+          - listitem [ref=f2e82]:
+            - button "JPM $210.98 +0.66%" [ref=f2e309] [cursor=pointer]:
+              - generic [ref=f2e84]: JPM
+              - generic [ref=f2e86]: $210.98
+              - generic [ref=f2e87]: +0.66%
+            - button "Remove JPM" [ref=f2e88] [cursor=pointer]: ×
+          - listitem [ref=f2e89]:
+            - button "V $278.07 +0.70%" [ref=f2e310] [cursor=pointer]:
+              - generic [ref=f2e91]: V
+              - generic [ref=f2e93]: $278.07
+              - generic [ref=f2e94]: +0.70%
+            - button "Remove V" [ref=f2e95] [cursor=pointer]: ×
+          - listitem [ref=f2e96]:
+            - button "NFLX $699.01 +0.51%" [ref=f2e311] [cursor=pointer]:
+              - generic [ref=f2e98]: NFLX
+              - generic [ref=f2e100]: $699.01
+              - generic [ref=f2e101]: +0.51%
+            - button "Remove NFLX" [ref=f2e102] [cursor=pointer]: ×
+      - generic [ref=f2e103]:
+        - region "AAPL" [ref=f2e312]:
+          - generic [ref=f2e105]:
+            - generic [ref=f2e106]:
+              - paragraph [ref=f2e107]: Selected ticker
+              - heading "AAPL" [level=2] [ref=f2e313]
+            - strong [ref=f2e109]: $190.04
+          - img "AAPL price chart" [ref=f2e314]
+        - region "Trade" [ref=f2e111]:
+          - generic [ref=f2e113]:
+            - paragraph [ref=f2e114]: Orders
+            - heading "Trade" [level=2] [ref=f2e115]
+          - generic [ref=f2e116]:
+            - textbox "Trade ticker" [ref=f2e117]:
+              - /placeholder: Ticker
+              - text: AAPL
+            - textbox "Quantity" [ref=f2e118]:
+              - /placeholder: Qty
+              - text: "5"
+            - button "Buy" [ref=f2e119] [cursor=pointer]
+            - button "Sell" [ref=f2e120] [cursor=pointer]
+        - region "Portfolio value" [ref=f2e121]:
+          - generic [ref=f2e122]:
+            - generic [ref=f2e123]:
+              - paragraph [ref=f2e124]: Performance
+              - heading "Portfolio value" [level=2] [ref=f2e125]
+            - strong [ref=f2e126]: $9,999.98
+          - img "Portfolio value chart" [ref=f2e127]
+      - complementary [ref=f2e128]:
+        - region "Positions" [ref=f2e129]:
+          - generic [ref=f2e131]:
+            - paragraph [ref=f2e132]: Holdings
+            - heading "Positions" [level=2] [ref=f2e133]
+          - table [ref=f2e186]:
+            - rowgroup [ref=f2e187]:
+              - row [ref=f2e188]:
+                - columnheader "Symbol" [ref=f2e189]
+                - columnheader "Qty" [ref=f2e190]
+                - columnheader "Value" [ref=f2e191]
+            - rowgroup [ref=f2e192]:
+              - row [ref=f2e315]:
+                - cell "AAPL" [ref=f2e194]
+                - cell "5" [ref=f2e195]
+                - cell "$950.19" [ref=f2e316]
+              - row [ref=f2e317]:
+                - cell "NVDA" [ref=f2e257]
+                - cell "3" [ref=f2e258]
+                - cell "$379.95" [ref=f2e318]
+        - region "Portfolio heatmap" [ref=f2e135]:
+          - generic [ref=f2e137]:
+            - paragraph [ref=f2e138]: Allocation
+            - heading "Portfolio heatmap" [level=2] [ref=f2e139]
+          - img "Portfolio heatmap" [ref=f2e140]:
+            - generic [ref=f2e197]:
+              - generic [ref=f2e199]: AAPL
+              - generic [ref=f2e200]: "-0.04%"
+            - generic [ref=f2e260]:
+              - generic [ref=f2e262]: NVDA
+              - generic [ref=f2e263]: "-0.31%"
+        - region "AI assistant" [ref=f2e142]:
+          - generic [ref=f2e144]:
+            - paragraph [ref=f2e145]: Copilot
+            - heading "AI assistant" [level=2] [ref=f2e146]
+          - generic [ref=f2e147]:
+            - generic [ref=f2e148]: Ready. Ask about your portfolio, request a trade, or manage the watchlist.
+            - generic [ref=f2e264]: Buy 3 NVDA
+            - generic [ref=f2e265]: Bought 3 NVDA at $127.04.
+          - generic [ref=f2e149]:
+            - textbox "Chat message" [ref=f2e150]:
+              - /placeholder: Ask or request a trade
+            - button "Send" [ref=f2e151] [cursor=pointer]
+  - alert [ref=f2e152]

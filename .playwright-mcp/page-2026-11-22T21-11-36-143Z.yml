@@ -1,0 +1,28 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - paragraph [ref=e4]: FinAlly
+      - heading "Trading dashboard" [level=1] [ref=e5]
+      - paragraph [ref=e6]: Track your portfolio and follow live market prices in one focused view.
+    - region "$10,000" [ref=e7]:
+      - paragraph [ref=e8]: Portfolio value
+      - heading "$10,000" [level=2] [ref=e9]
+      - paragraph [ref=e10]: +$248.40 today · +2.54%
+    - region "Live market prices" [ref=e11]:
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - paragraph [ref=e14]: Market watch
+          - heading "Live market prices" [level=2] [ref=e15]
+        - text: Market open
+      - list "Tracked tickers" [ref=e16]:
+        - listitem [ref=e17]: AAPL$189.84+1.24%
+        - listitem [ref=e18]: MSFT$421.40+0.86%
+        - listitem [ref=e19]: GOOGL$176.12+0.51%
+        - listitem [ref=e20]: AMZN$186.10+1.08%
+        - listitem [ref=e21]: NVDA$126.09+2.31%
+        - listitem [ref=e22]: TSLA$248.98-0.42%
+        - listitem [ref=e23]: META$567.16+1.67%
+        - listitem [ref=e24]: JPM$211.35+0.34%
+        - listitem [ref=e25]: V$278.46+0.72%
+        - listitem [ref=e26]: NFLX$701.35+1.92%
+  - alert [ref=e27]
