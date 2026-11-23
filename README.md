@@ -1210,10 +1210,13 @@ export FREERIDE_WORKFLOW_MAX_UPSTREAM_ATTEMPTS=3000
 ```
 
 Changing a shell's environment does not alter an agent or proxy that is already
-running; restart the process whose limit you changed. After changing the Gas Town
-request limit, explicitly resume a budget-paused workflow, for example
-`gt mayor workflow resume wf-3`. Existing usage is retained, and new Gas Town
-admissions persist the enforcing request/token limits in the workflow ledger.
+running; restart the process whose limit you changed. Gas Town persists the
+request/token limits used by each workflow: after an agent restart, the recorded
+limit remains effective when its environment variable is unset. An explicit
+environment value overrides the recorded limit; a per-workflow token override
+set with `gt mayor workflow budget --tokens` takes precedence for tokens. After
+changing a Gas Town limit, explicitly resume a budget-paused workflow, for example
+`gt mayor workflow resume wf-3`. Existing usage is retained.
 Freeride upstream attempts are counted separately from Gas Town LLM requests.
 Dollar coverage depends on the provider's usage reporting and the pricing
 configured below.

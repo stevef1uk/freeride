@@ -19,6 +19,45 @@ _SUCCESS = re.compile(
     r"(?:Model|\[LOCAL\]) (.+?) succeeded \(status \d+\)(?: for role=(\w+))?"
 )
 
+_MODEL_ALIASES = {
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast": "llama-3.3-70b",
+    "meta/llama-3.3-70b-instruct": "llama-3.3-70b",
+    "llama-3.3-70b-instruct": "llama-3.3-70b",
+    "nemotron-3.5-super-vl-120b-a12b": "nemotron-3.5-super-120b-a12b",
+}
+_PROVIDER_PREFIXES = (
+    "groq/",
+    "cloudflare/",
+    "nvidia/",
+    "cerebras/",
+    "private/",
+    "openrouter/",
+    "deepseek/",
+    "google/",
+    "openai/",
+    "z-ai/",
+)
+_MODEL_SUFFIXES = ("-latest", "-0731", "-free")
+
+def canonical_model_id(model: str) -> str:
+    normalized = model.strip().lower().lstrip("~")
+    if normalized in _MODEL_ALIASES:
+        return _MODEL_ALIASES[normalized]
+    while True:
+        for prefix in _PROVIDER_PREFIXES:
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix):]
+                break
+        else:
+            break
+    if normalized in _MODEL_ALIASES:
+        return _MODEL_ALIASES[normalized]
+    for suffix in _MODEL_SUFFIXES:
+        if normalized.endswith(suffix):
+            normalized = normalized[:-len(suffix)]
+            break
+    return normalized
+
 def iter_lines(path: str | None) -> list[str]:
     if path is None or path == "-":
         return sys.stdin.read().splitlines()
@@ -114,8 +153,9 @@ def print_table(interval_name: str, attempts: Counter, completions: Counter, tps
     for m in models:
         w_comp = max(w_comp, len(str(completions[m])))
         w_att = max(w_att, len(str(attempts[m])))
-        if has_tps and m in tps_data:
-            w_tps = max(w_tps, len(f"{tps_data[m]:.1f}"))
+        tps_key = canonical_model_id(m)
+        if has_tps and tps_key in tps_data:
+            w_tps = max(w_tps, len(f"{tps_data[tps_key]:.1f}"))
 
     if has_tps:
         sep = f"+-{'-' * w_model}-+-{'-' * w_comp}-+-{'-' * w_att}-+-{'-' * w_rate}-+-{'-' * w_tps}-+"
@@ -142,8 +182,9 @@ def print_table(interval_name: str, attempts: Counter, completions: Counter, tps
         rate = f"{(c / a * 100):.1f}%" if a > 0 else "0.0%"
         cells = [m, str(c), str(a), rate]
         if has_tps:
-            if m in tps_data:
-                tps_val = tps_data[m]
+            tps_key = canonical_model_id(m)
+            if tps_key in tps_data:
+                tps_val = tps_data[tps_key]
                 cells.append(f"{tps_val:.1f}")
                 total_tps_sum += tps_val
                 total_tps_count += 1
@@ -184,7 +225,7 @@ def parse_throughput(lines: list[str]) -> dict[str, dict]:
             continue
         dur_s = _parse_duration(m.group(2))
         nbytes = int(m.group(3))
-        model = m.group(4)
+        model = canonical_model_id(m.group(4))
         # Estimate tokens: ~3.5 bytes per token for JSON/English text
         est_tokens = max(1, int(nbytes / 3.5))
         tps = est_tokens / dur_s if dur_s > 0 else 0
@@ -260,7 +301,7 @@ def main() -> None:
                 continue
             dur_s = _parse_duration(m_tp.group(2))
             nbytes = int(m_tp.group(3))
-            model = m_tp.group(4)
+            model = canonical_model_id(m_tp.group(4))
             est_tokens = max(1, int(nbytes / 3.5))
             tps = est_tokens / dur_s if dur_s > 0 else 0
             tps_all.setdefault(model, []).append(tps)

@@ -50,7 +50,7 @@ rolePrepend:
   # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
   # so planner/architect/qa use better models instead of looping on minimax:free.
   polecat:
-    - "openai/gpt-5.6-luna"
+    - "z-ai/glm-5.3-flash"
     - "minimax/minimax-m3.1-flash:free"
     - "nvidia/nemotron-3.5-super-vl-120b-a12b"
     - "cloudflare/llama-3.3-70b"
@@ -59,7 +59,7 @@ rolePrepend:
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/llama-3.3-70b"
   architect:
-    - "openai/gpt-5.6-luna"
+    - "z-ai/glm-5.3-flash"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
   tester:
@@ -69,21 +69,21 @@ rolePrepend:
   qa:
     # Keep the structured-outcome reviewer on DeepSeek; GLM returned empty
     # assistant content for design_review (2026-11-18).
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "anthropic/claude-haiku-5.5"
     - "deepseek/deepseek-v4.1-flash"
     - "nvidia/nemotron-3.5-super-vl-120b-a12b"
     - "minimax/minimax-m3.1-flash"
     - "google/gemini-3.6-flash"
     - "google/gemini-3.5-flash"
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
     - "openai/gpt-5.6-luna" # shared-model last resort, enforced across all tiers
   setup:
-    - "openai/gpt-5.6-luna"
+    - "z-ai/glm-5.3-flash"
     - "minimax/minimax-m3.1-flash:free"
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "cloudflare/llama-3.3-70b"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
@@ -288,13 +288,11 @@ openrouterFreeRouter:
 
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
-  - "deepseek/deepseek-v4-flash"             # $0.09 (In) / $0.18 (Out) per 1M — 284B MoE, 1M context
-  - "openai/gpt-5.6-luna"                    # $0.10 (In) / $0.60 (Out) per 1M — fast, 1M context, 128K output
-  - "openai/gpt-4o-mini"                     # $0.15 (In) / $0.60 (Out) per 1M
+  - "~deepseek/deepseek-v4-flash-latest"     # $0.044 (In) / $0.132 (Out) per 1M — cheapest DeepSeek alias, 1M context
+  - "z-ai/glm-5.3-flash"                     # $0.0399 (In) / $0.0784 (Out) per 1M — non-QA fallback only
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
-  - "z-ai/glm-5.3-flash"                 # Empty assistant content in structured workflow reviews (2026-11-18)
   - "google/gemma-4-26b-a4b-it:free"      # Currently broken 401
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
@@ -352,7 +350,7 @@ excludeModels:
   - "minimax/minimax-m3:free"                   # 404 — free variant removed, paid slug is minimax/minimax-m3
   - "qwen/qwen3-coder:free"                     # 404 — free variant removed (paid variant also 0% success)
   - "z-ai/glm-4.5-air:free"                     # 404 — free variant removed
-  - "deepseek/deepseek-v4-flash:free"           # 404 — free variant removed (paid slug: deepseek/deepseek-v4-flash)
+  - "deepseek/deepseek-v4-flash:free"           # 404 — free variant removed (paid slug: ~deepseek/deepseek-v4-flash-latest)
   - "deepseek/deepseek-v4.1-flash:free"         # 404 — free variant removed (paid slug: deepseek/deepseek-v4.1-flash)
   - "cohere/north-mini-code"                    # 404 — no endpoints; free slug is cohere/north-mini-code:free
   # Models with 0% success rate in live testing (2026-08-27)
