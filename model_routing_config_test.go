@@ -39,12 +39,12 @@ func TestQARoutingExcludesGLMEmptyResponses(t *testing.T) {
 	if hasModel(qaModels, glmModel) {
 		t.Fatalf("QA candidate list still contains excluded model %s", glmModel)
 	}
-	if !hasModel(config.CuratedPaid, glmModel) {
-		t.Fatalf("curatedPaid = %v, want %s", config.CuratedPaid, glmModel)
+	if hasModel(config.CuratedPaid, glmModel) {
+		t.Fatalf("curatedPaid = %v, must not contain %s", config.CuratedPaid, glmModel)
 	}
-	for _, role := range []string{"polecat", "architect", "setup"} {
-		if !hasModel(config.RolePrepend[role], glmModel) {
-			t.Errorf("rolePrepend:%s = %v, want %s", role, config.RolePrepend[role], glmModel)
+	for role, models := range config.RolePrepend {
+		if hasModel(models, glmModel) {
+			t.Errorf("rolePrepend:%s = %v, must not contain %s", role, models, glmModel)
 		}
 	}
 	testerModels := config.RolePrepend["tester"]
@@ -56,7 +56,7 @@ func TestQARoutingExcludesGLMEmptyResponses(t *testing.T) {
 	}
 }
 
-func TestPlannerRoutingExcludesGLMToolCallFormatting(t *testing.T) {
+func TestPlannerAndArchitectRoutingExcludeGLMToolCallFormatting(t *testing.T) {
 	data, err := os.ReadFile("models.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -69,14 +69,16 @@ func TestPlannerRoutingExcludesGLMToolCallFormatting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plannerModels := config.RolePrepend["planner"]
-	if len(plannerModels) == 0 || plannerModels[0] != "openai/gpt-5.6-luna" {
-		t.Fatalf("planner primary = %v, want openai/gpt-5.6-luna first", plannerModels)
-	}
 	const glmModel = "z-ai/glm-5.3-flash"
-	for _, model := range plannerModels {
-		if strings.EqualFold(model, glmModel) {
-			t.Fatalf("planner candidate list still contains excluded model %s: %v", glmModel, plannerModels)
+	for _, role := range []string{"planner", "architect"} {
+		models := config.RolePrepend[role]
+		if len(models) == 0 || models[0] != "openai/gpt-5.6-luna" {
+			t.Errorf("%s primary = %v, want openai/gpt-5.6-luna first", role, models)
+		}
+		for _, model := range models {
+			if strings.EqualFold(model, glmModel) {
+				t.Errorf("rolePrepend:%s still contains excluded model %s: %v", role, glmModel, models)
+			}
 		}
 	}
 }

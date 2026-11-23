@@ -50,7 +50,6 @@ rolePrepend:
   # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
   # so planner/architect/qa use better models instead of looping on minimax:free.
   polecat:
-    - "z-ai/glm-5.3-flash"
     - "minimax/minimax-m3.1-flash:free"
     - "nvidia/nemotron-3.5-super-vl-120b-a12b"
     - "cloudflare/llama-3.3-70b"
@@ -59,7 +58,7 @@ rolePrepend:
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/llama-3.3-70b"
   architect:
-    - "z-ai/glm-5.3-flash"
+    - "openai/gpt-5.6-luna"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
   tester:
@@ -81,7 +80,6 @@ rolePrepend:
     - "cloudflare/qwen-2.5-coder-32b"
     - "openai/gpt-5.6-luna" # shared-model last resort, enforced across all tiers
   setup:
-    - "z-ai/glm-5.3-flash"
     - "minimax/minimax-m3.1-flash:free"
     - "~deepseek/deepseek-v4-flash-latest"
     - "cloudflare/llama-3.3-70b"
@@ -289,7 +287,6 @@ openrouterFreeRouter:
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
   - "~deepseek/deepseek-v4-flash-latest"     # $0.044 (In) / $0.132 (Out) per 1M — cheapest DeepSeek alias, 1M context
-  - "z-ai/glm-5.3-flash"                     # $0.0399 (In) / $0.0784 (Out) per 1M — non-QA fallback only
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
