@@ -5,22 +5,19 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func rate(v float64) *float64 { return &v }
-func TestDirectProviderBudgetUsesSharedLedger(t *testing.T) {
+
+func TestDirectProviderAccountingUsesSharedLedger(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
 	prices := map[string]workflowTokenPrice{"cerebras/model": {Input: rate(1), Output: rate(2)}, "groq/*": {Input: rate(1), Output: rate(2)}}
 	for _, provider := range []string{"cerebras", "groq"} {
 		payload := []byte(`{"model":"model","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"stream":true}`)
-		encoded, reservation, err := reserveProviderWorkflowBudget("rig", "wf", path, payload, provider+"/model", map[string]string{"cerebras": "https://api.cerebras.ai/v1/chat/completions", "groq": "https://api.groq.com/openai/v1/chat/completions"}[provider], nil, prices)
-		if err != nil {
-			t.Fatal(err)
-		}
+		encoded, accounting := trackProviderWorkflowCost("rig", "wf", path, payload, provider+"/model", map[string]string{"cerebras": "https://api.cerebras.ai/v1/chat/completions", "groq": "https://api.groq.com/openai/v1/chat/completions"}[provider], nil, prices)
 		var body map[string]interface{}
 		if err := json.Unmarshal(encoded, &body); err != nil {
 			t.Fatal(err)
@@ -35,9 +32,9 @@ func TestDirectProviderBudgetUsesSharedLedger(t *testing.T) {
 		if provider == "groq" {
 			usage = `{"x_groq":{"usage":{"prompt_tokens":100,"completion_tokens":10}}}`
 		}
-		reservation.settleResponse([]byte(usage))
-		reservation.finishAccounting()
-		if mode := reservation.accountingMode(); mode != "estimated" {
+		accounting.accountResponse([]byte(usage))
+		accounting.finishAccounting()
+		if mode := accounting.accountingMode(); mode != "estimated" {
 			t.Fatal(mode)
 		}
 	}
@@ -48,55 +45,31 @@ func TestDirectProviderBudgetUsesSharedLedger(t *testing.T) {
 
 func TestDirectReportedCostOverridesTokenEstimate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
-	_, r, err := reserveProviderWorkflowBudget("rig", "wf", path, []byte(`{"max_tokens":100}`), "cerebras/model", "https://api.cerebras.ai/v1/chat/completions", nil, map[string]workflowTokenPrice{"cerebras/model": {Input: rate(1), Output: rate(2)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.settleResponse([]byte(`{"usage":{"cost":0.00001,"prompt_tokens":1000,"completion_tokens":100}}`))
+	_, accounting := trackProviderWorkflowCost("rig", "wf", path, []byte(`{"max_tokens":100}`), "cerebras/model", "https://api.cerebras.ai/v1/chat/completions", nil, map[string]workflowTokenPrice{"cerebras/model": {Input: rate(1), Output: rate(2)}})
+	accounting.accountResponse([]byte(`{"usage":{"cost":0.00001,"prompt_tokens":1000,"completion_tokens":100}}`))
 	if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != 10 {
 		t.Fatal(got)
 	}
 }
 
-func TestDirectProviderWorkflowDollarOverrideAndStatus(t *testing.T) {
-	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")
+func TestProxyDoesNotEnforcePayloadOrPricePolicy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
-	if err := os.WriteFile(path+".limits", []byte(`{"[\"rig\",\"wf\"]":10000000}`), 0600); err != nil {
-		t.Fatal(err)
+	payload := []byte(`{"n":2,"plugins":[],"modalities":["image"],"tools":[{"type":"web_search"}],"messages":[{"content":[{"type":"image_url"}]}],"max_tokens":9000}`)
+	tracked, accounting := trackProviderWorkflowCost("rig", "wf", path, payload, "cerebras/model", "https://api.cerebras.ai/v1/chat/completions", nil, map[string]workflowTokenPrice{"cerebras/model": {Input: rate(1), Output: rate(2)}})
+	if string(tracked) != string(payload) {
+		t.Fatalf("proxy mutated payload: %s", tracked)
 	}
-	_, reservation, err := reserveProviderWorkflowBudget(
-		"rig", "wf", path,
-		[]byte(`{"max_tokens":8192}`),
-		"cerebras/model", "https://api.cerebras.ai/v1/chat/completions",
-		nil, map[string]workflowTokenPrice{"cerebras/model": {Input: rate(1), Output: rate(2)}},
-	)
-	if err != nil {
-		t.Fatalf("workflow override was not applied: %v", err)
-	}
-	reservation.settleResponse([]byte(`{"usage":{"prompt_tokens":10,"completion_tokens":10}}`))
-	reservation.finishAccounting()
-
-	t.Setenv("FREERIDE_EXECUTION_BUDGET_PATH", path)
-	rec := httptest.NewRecorder()
-	handleWorkflowBudgetStatus(rec, httptest.NewRequest("GET", "/api/budgets?rig=rig&workflow=wf", nil))
-	var status map[string]interface{}
-	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
-		t.Fatal(err)
-	}
-	if rec.Code != http.StatusOK || status["workflow_allowance_usd"] != float64(10) {
-		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	if accounting == nil || accounting.unknownPricing {
+		t.Fatalf("valid pricing marked unknown: %+v", accounting)
 	}
 }
 
 func TestUnknownProviderCostIsVisible(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
 	t.Setenv("FREERIDE_EXECUTION_BUDGET_PATH", path)
-	_, r, err := reserveProviderWorkflowBudget("rig", "wf", path, []byte(`{"max_tokens":100}`), "cerebras/unpriced", "https://api.cerebras.ai/v1/chat/completions", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.settleResponse([]byte(`{"usage":{"prompt_tokens":100,"completion_tokens":10}}`))
-	r.finishAccounting()
+	_, accounting := trackProviderWorkflowCost("rig", "wf", path, []byte(`{"max_tokens":100}`), "cerebras/unpriced", "https://api.cerebras.ai/v1/chat/completions", nil, nil)
+	accounting.accountResponse([]byte(`{"usage":{"prompt_tokens":100,"completion_tokens":10}}`))
+	accounting.finishAccounting()
 	rec := httptest.NewRecorder()
 	handleWorkflowBudgetStatus(rec, httptest.NewRequest("GET", "/api/budgets?rig=rig&workflow=wf", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"accounting":"cost unknown"`) || !strings.Contains(rec.Body.String(), `"unknown_cost_requests":1`) || !strings.Contains(rec.Body.String(), `"dollar_coverage_complete":false`) {
@@ -104,33 +77,34 @@ func TestUnknownProviderCostIsVisible(t *testing.T) {
 	}
 }
 
-func TestExplicitFreeAndInvalidPricing(t *testing.T) {
-	for _, tc := range []struct {
-		price workflowTokenPrice
-		valid bool
-	}{{workflowTokenPrice{Input: rate(0), Output: rate(0)}, true}, {workflowTokenPrice{Input: rate(0)}, false}, {workflowTokenPrice{Input: rate(-1), Output: rate(1)}, false}} {
+func TestInvalidPricingIsAccountingUnknownNotAnError(t *testing.T) {
+	for _, price := range []workflowTokenPrice{{Input: rate(0)}, {Input: rate(-1), Output: rate(1)}} {
 		path := filepath.Join(t.TempDir(), "budget.json")
-		_, r, err := reserveProviderWorkflowBudget("rig", "wf", path, []byte(`{}`), "local/free", "http://localhost/v1/chat/completions", nil, map[string]workflowTokenPrice{"local/free": tc.price})
-		if tc.valid != (err == nil) {
-			t.Fatalf("valid=%t error=%v", tc.valid, err)
-		}
-		if tc.valid {
-			r.settleResponse([]byte(`{}`))
-			if r.accountingMode() != "estimated" {
-				t.Fatal("explicit zero pricing was unknown")
-			}
+		payload := []byte(`{}`)
+		tracked, accounting := trackProviderWorkflowCost("rig", "wf", path, payload, "local/free", "http://localhost/v1/chat/completions", nil, map[string]workflowTokenPrice{"local/free": price})
+		if string(tracked) != string(payload) || accounting == nil || !accounting.unknownPricing {
+			t.Fatalf("pricing rejected request: tracked=%s accounting=%+v", tracked, accounting)
 		}
 	}
 }
 
-func TestDirectStreamingTokenUsageSettlement(t *testing.T) {
+func TestExplicitFreeRouteAccountsZero(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
-	_, r, err := reserveProviderWorkflowBudget("rig", "wf", path, []byte(`{"max_tokens":100}`), "cerebras/model", "https://api.cerebras.ai/v1/chat/completions", nil, map[string]workflowTokenPrice{"cerebras/*": {Input: rate(1), Output: rate(2)}})
-	if err != nil {
-		t.Fatal(err)
+	_, accounting := trackProviderWorkflowCost("rig", "wf", path, []byte(`{}`), "local/free", "http://localhost/v1/chat/completions", nil, map[string]workflowTokenPrice{"local/free": {Input: rate(0), Output: rate(0)}})
+	accounting.accountResponse([]byte(`{}`))
+	if accounting.accountingMode() != "estimated" {
+		t.Fatal(accounting.accountingMode())
 	}
+	if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != 0 {
+		t.Fatalf("free route accounted %d", got)
+	}
+}
+
+func TestDirectStreamingTokenUsageAccounting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "budget.json")
+	_, accounting := trackProviderWorkflowCost("rig", "wf", path, []byte(`{"max_tokens":100}`), "cerebras/model", "https://api.cerebras.ai/v1/chat/completions", nil, map[string]workflowTokenPrice{"cerebras/*": {Input: rate(1), Output: rate(2)}})
 	stream := "data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":10}}\n\ndata: [DONE]\n\n"
-	body := &budgetUsageBody{ReadCloser: io.NopCloser(strings.NewReader(stream)), reservation: r}
+	body := &usageAccountingBody{ReadCloser: io.NopCloser(strings.NewReader(stream)), accounting: accounting}
 	got, err := io.ReadAll(body)
 	if err != nil || string(got) != stream {
 		t.Fatal(err, string(got))
@@ -140,19 +114,7 @@ func TestDirectStreamingTokenUsageSettlement(t *testing.T) {
 	}
 }
 
-func TestFallbackCannotBypassSharedAllowance(t *testing.T) {
-	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")
-	path := filepath.Join(t.TempDir(), "budget.json")
-	if err := reserveBudgetUnits(path+".usd", "rig", "wf", 999, 1000, 1000); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := reserveProviderWorkflowBudget("rig", "wf", path, []byte(`{"max_tokens":100}`), "cerebras/model", "https://api.cerebras.ai/v1/chat/completions", nil, map[string]workflowTokenPrice{"cerebras/*": {Input: rate(1), Output: rate(2)}})
-	if err == nil {
-		t.Fatal("provider switch bypassed workflow dollar allowance")
-	}
-}
-
-func TestDirectProviderBudgetThroughProxy(t *testing.T) {
+func TestDirectProviderAccountingThroughProxy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
 	t.Setenv("FREERIDE_EXECUTION_BUDGET_PATH", path)
 	setupIsolatedLocalProxy(t, "https://api.cerebras.ai", "local/direct-test")
@@ -175,7 +137,7 @@ func TestDirectProviderBudgetThroughProxy(t *testing.T) {
 		body := `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":10}}`
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"local/direct-test","messages":[{"role":"user","content":"hi"}],"max_tokens":100}`))
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"local/direct-test","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"plugins":[],"modalities":["image"]}`))
 	req.Header.Set("X-GasTown-Rig", "rig")
 	req.Header.Set("X-GasTown-Workflow", "wf")
 	rec := httptest.NewRecorder()
@@ -188,11 +150,9 @@ func TestDirectProviderBudgetThroughProxy(t *testing.T) {
 	}
 }
 
-func TestBudgetStatusIncludesRigAllowance(t *testing.T) {
+func TestBudgetStatusIncludesRigAccountingWithoutAllowances(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
 	t.Setenv("FREERIDE_EXECUTION_BUDGET_PATH", path)
-	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "5")
-	t.Setenv("FREERIDE_RIG_MAX_COST_USD", "20")
 	if err := updateBudgetLedger(path+".usd", func(ledger map[string]int64) error {
 		ledger[budgetKey("rig", "wf")] = 480000
 		ledger[budgetKey("rig")] = 1250000
@@ -206,7 +166,12 @@ func TestBudgetStatusIncludesRigAllowance(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || status["rig_allowance_usd"] != float64(20) || status["rig_accounted_cost_usd"] != 1.25 || status["workflow_allowance_usd"] != float64(5) {
+	if rec.Code != 200 || status["rig_accounted_cost_usd"] != 1.25 || status["accounted_cost_usd"] != 0.48 {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	for _, key := range []string{"rig_allowance_usd", "workflow_allowance_usd"} {
+		if _, exists := status[key]; exists {
+			t.Fatalf("status still reports limit %s", key)
+		}
 	}
 }

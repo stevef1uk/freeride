@@ -17,6 +17,9 @@ import (
 func readCostLedger(t *testing.T, path string) map[string]int64 {
 	t.Helper()
 	data, err := os.ReadFile(path + ".usd")
+	if os.IsNotExist(err) {
+		return map[string]int64{}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,25 +30,21 @@ func readCostLedger(t *testing.T, path string) map[string]int64 {
 	return ledger
 }
 
-func reserveTestCost(t *testing.T, path, workflow string) *workflowCostReservation {
+func trackedTestCost(t *testing.T, path, workflow string) *workflowCostAccounting {
 	t.Helper()
-	_, r, err := reserveOpenRouterWorkflowBudget("rig", workflow, path, []byte(`{"model":"sample","messages":[{"role":"user","content":"hello"}],"max_tokens":100}`))
-	if err != nil {
-		t.Fatal(err)
+	_, accounting := trackOpenRouterWorkflowCost("rig", workflow, path, []byte(`{"model":"sample","messages":[{"role":"user","content":"hello"}]}`), nil)
+	if accounting == nil {
+		t.Fatal("missing accounting")
 	}
-	if r == nil {
-		t.Fatal("missing reservation")
-	}
-	return r
+	return accounting
 }
 
-func TestCostSettlementPreventsFalseBudgetExhaustion(t *testing.T) {
-	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")
+func TestCostAccountingIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
 	for i := 0; i < 30; i++ {
-		r := reserveTestCost(t, path, "wf")
-		r.settleResponse([]byte(`{"usage":{"cost":0.00001}}`))
-		r.settleResponse([]byte(`{"usage":{"cost":0.00001}}`)) // Idempotent.
+		r := trackedTestCost(t, path, "wf")
+		r.accountResponse([]byte(`{"usage":{"cost":0.00001}}`))
+		r.accountResponse([]byte(`{"usage":{"cost":0.00001}}`))
 	}
 	ledger := readCostLedger(t, path)
 	for _, key := range []string{budgetKey("rig", "wf"), budgetKey("rig")} {
@@ -55,29 +54,34 @@ func TestCostSettlementPreventsFalseBudgetExhaustion(t *testing.T) {
 	}
 }
 
-func TestCostSettlementRetainsUnknownCharges(t *testing.T) {
+func TestUnknownChargesAreNotRecordedAsFree(t *testing.T) {
 	for _, body := range []string{`{}`, `{"usage":{}}`, `{"usage":{"cost":null}}`, `{"usage":{"cost":-1}}`, `{"usage":{"cost":"0"}}`, `broken`} {
 		t.Run(body, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "budget.json")
-			r := reserveTestCost(t, path, "wf")
-			r.settleResponse([]byte(body))
-			if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != r.units {
-				t.Fatalf("unknown charge released: %d", got)
+			r := trackedTestCost(t, path, "wf")
+			r.accountResponse([]byte(body))
+			if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != 0 {
+				t.Fatalf("unknown charge recorded: %d", got)
+			}
+			r.finishAccounting()
+			coverage, err := os.ReadFile(path + ".usd.coverage")
+			if err != nil || !strings.Contains(string(coverage), "unknown") {
+				t.Fatalf("coverage=%s err=%v", coverage, err)
 			}
 		})
 	}
 }
 
-func TestCostSettlementConcurrentWorkflows(t *testing.T) {
+func TestCostAccountingConcurrentWorkflows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
-	first := reserveTestCost(t, path, "wf1")
-	second := reserveTestCost(t, path, "wf2")
+	first := trackedTestCost(t, path, "wf1")
+	second := trackedTestCost(t, path, "wf2")
 	var wg sync.WaitGroup
-	for _, r := range []*workflowCostReservation{first, second} {
+	for _, r := range []*workflowCostAccounting{first, second} {
 		wg.Add(1)
-		go func(r *workflowCostReservation) {
+		go func(r *workflowCostAccounting) {
 			defer wg.Done()
-			if err := r.settleCost(.00002); err != nil {
+			if err := r.recordCost(.00002); err != nil {
 				t.Error(err)
 			}
 		}(r)
@@ -89,13 +93,12 @@ func TestCostSettlementConcurrentWorkflows(t *testing.T) {
 	}
 }
 
-func TestStreamingCostSettlementPreservesResponse(t *testing.T) {
+func TestStreamingCostAccountingPreservesResponse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
-	r := reserveTestCost(t, path, "wf")
+	r := trackedTestCost(t, path, "wf")
 	stream := "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: {\"usage\":{\"cost\":0.00003}}\r\n\ndata: [DONE]\n\n"
-	body := &budgetUsageBody{ReadCloser: io.NopCloser(strings.NewReader(stream)), reservation: r}
+	body := &usageAccountingBody{ReadCloser: io.NopCloser(strings.NewReader(stream)), accounting: r}
 	var got bytes.Buffer
-	// Force usage JSON to cross many Read boundaries.
 	buf := make([]byte, 7)
 	for {
 		n, err := body.Read(buf)
@@ -110,16 +113,8 @@ func TestStreamingCostSettlementPreservesResponse(t *testing.T) {
 	if got.String() != stream {
 		t.Fatal("stream changed")
 	}
-	if units := readCostLedger(t, path)[budgetKey("rig", "wf")]; units != 30 {
-		t.Fatalf("cost %d", units)
-	}
-}
-
-func TestBudgetErrorReportsDollars(t *testing.T) {
-	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.000001")
-	_, _, err := reserveOpenRouterWorkflowBudget("rig", "wf", filepath.Join(t.TempDir(), "budget.json"), []byte(`{"model":"sample","max_tokens":100}`))
-	if err == nil || !strings.Contains(err.Error(), "workflow cost allowance $") || strings.Contains(err.Error(), "upstream attempt limit") {
-		t.Fatalf("error: %v", err)
+	if cost := readCostLedger(t, path)[budgetKey("rig", "wf")]; cost != 30 {
+		t.Fatalf("cost %d", cost)
 	}
 }
 
@@ -127,7 +122,7 @@ type budgetTestTransport func(*http.Request) (*http.Response, error)
 
 func (f budgetTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestProxySettlesProviderCostBeforeReturning(t *testing.T) {
+func TestProxyAccountsProviderCostBeforeReturning(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 		status     int
@@ -141,7 +136,7 @@ func TestProxySettlesProviderCostBeforeReturning(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "budget.json")
 			t.Setenv("FREERIDE_EXECUTION_BUDGET_PATH", path)
-			setupIsolatedLocalProxy(t, "https://openrouter.ai/api", "local/budget-settlement")
+			setupIsolatedLocalProxy(t, "https://openrouter.ai/api", "local/budget-accounting")
 			previous := http.DefaultClient
 			t.Cleanup(func() { http.DefaultClient = previous })
 			http.DefaultClient = &http.Client{Transport: budgetTestTransport(func(req *http.Request) (*http.Response, error) {
@@ -150,7 +145,7 @@ func TestProxySettlesProviderCostBeforeReturning(t *testing.T) {
 				}
 				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			})}
-			payload := fmt.Sprintf(`{"model":"local/budget-settlement","messages":[{"role":"user","content":"hello"}],"max_tokens":100,"stream":%t}`, tc.stream)
+			payload := fmt.Sprintf(`{"model":"local/budget-accounting","messages":[{"role":"user","content":"hello"}],"max_tokens":100,"stream":%t}`, tc.stream)
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(payload))
 			req.Header.Set("X-GasTown-Rig", "rig")
 			req.Header.Set("X-GasTown-Workflow", "wf")

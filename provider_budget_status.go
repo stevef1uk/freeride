@@ -63,23 +63,6 @@ func handleWorkflowBudgetStatus(w http.ResponseWriter, r *http.Request) {
 	if status["accounting"] == "no completed priced calls" && dollars[budgetKey(rig, workflow)] > 0 {
 		status["accounting"] = "legacy accounted cost; provider coverage history unavailable"
 	}
-	limit, err := budgetFloat("FREERIDE_WORKFLOW_MAX_COST_USD", 5)
-	if err != nil {
-		http.Error(w, err.Error(), 503)
-		return
-	}
-	limit, err = workflowCostLimit(path, rig, workflow, limit)
-	if err != nil {
-		http.Error(w, err.Error(), 503)
-		return
-	}
-	status["workflow_allowance_usd"] = limit
-	rigLimit, err := budgetFloat("FREERIDE_RIG_MAX_COST_USD", 20)
-	if err != nil {
-		http.Error(w, err.Error(), 503)
-		return
-	}
-	status["rig_allowance_usd"] = rigLimit
 	status["rig_accounted_cost_usd"] = float64(dollars[budgetKey(rig)]) / 1e6
 
 	status["dollar_coverage_complete"] = status["unknown_cost_requests"] == int64(0) && status["accounting"] != "legacy accounted cost; provider coverage history unavailable"

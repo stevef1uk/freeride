@@ -470,29 +470,22 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			outboundBody = bodyBytes
 		}
 
-		var costReservation *workflowCostReservation
+		var costAccounting *workflowCostAccounting
 		if r.Header.Get("X-GasTown-Workflow") != "" {
 			budgetPath, pathErr := workflowBudgetPath()
 			if pathErr != nil {
-				http.Error(w, pathErr.Error(), http.StatusPaymentRequired)
-				return
-			}
-			bounded, reservation, budgetErr := reserveProviderWorkflowBudget(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow"), budgetPath, outboundBody, candidate, targetURL, models, conf.WorkflowPricing)
-			if budgetErr != nil {
-				http.Error(w, budgetErr.Error(), http.StatusPaymentRequired)
-				return
-			}
-			outboundBody = bounded
-			costReservation = reservation
-			if reservation != nil {
-				defer reservation.finishAccounting()
+				log.Printf("[BUDGET] cost accounting unavailable: %v", pathErr)
+			} else {
+				outboundBody, costAccounting = trackProviderWorkflowCost(r.Header.Get("X-GasTown-Rig"), r.Header.Get("X-GasTown-Workflow"), budgetPath, outboundBody, candidate, targetURL, models, conf.WorkflowPricing)
+				if costAccounting != nil {
+					defer costAccounting.finishAccounting()
+				}
 			}
 		}
 		upstreamTimeout := upstreamRequestTimeout(candidate)
 		upCtx, upCancel := context.WithTimeout(r.Context(), upstreamTimeout)
 		req, err := http.NewRequestWithContext(upCtx, "POST", targetURL, bytes.NewBuffer(outboundBody))
 		if err != nil {
-			_ = costReservation.settleCost(0)
 			log.Printf("[ERROR] Failed to create request for %s: %v", candidate, err)
 			upCancel()
 			continue
@@ -555,15 +548,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 			// Log error body
 			errorBody, _ := ioutil.ReadAll(resp.Body)
-			costReservation.settleResponse(errorBody)
-			switch resp.StatusCode {
-			case 400, 401, 402, 403, 404, 429:
-				// These requests were rejected before inference. Unknown server/transport
-				// failures retain their reservation because billing cannot be established.
-				if err := costReservation.settleCost(0); err != nil {
-					log.Printf("[BUDGET] rejected request settlement failed: %v", err)
-				}
-			}
+			costAccounting.accountResponse(errorBody)
 			log.Printf("[ERROR] Model %s response body: %s", candidate, string(errorBody))
 			resp.Body.Close()
 
@@ -623,15 +608,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Failed to read upstream body; see Freeride logs for details", http.StatusBadGateway)
 				return
 			}
-			costReservation.settleResponse(body)
+			costAccounting.accountResponse(body)
 			resp.Body = io.NopCloser(bytes.NewReader(body))
 			resp.Header.Del("Content-Encoding")
 			resp.Header.Del("Content-Length")
 			resp.ContentLength = int64(len(body))
 		}
 
-		if isStream && costReservation != nil {
-			resp.Body = &budgetUsageBody{ReadCloser: resp.Body, reservation: costReservation}
+		if isStream && costAccounting != nil {
+			resp.Body = &usageAccountingBody{ReadCloser: resp.Body, accounting: costAccounting}
 		}
 
 		// For non-streaming requests, success means the complete body was read.
@@ -654,10 +639,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Model %s returned status %d. Skipping (not cooling down).", candidate, resp.StatusCode)
 		}
 
-		if costReservation != nil {
-			w.Header().Set("X-Freeride-Cost-Accounting", costReservation.accountingMode())
-			if costReservation.accountingMode() == "unknown" {
-				w.Header().Set("X-Freeride-Budget-Warning", "Cost unknown: configure workflowPricing for this route; request limits and Gas Town token limits remain active.")
+		if costAccounting != nil {
+			w.Header().Set("X-Freeride-Cost-Accounting", costAccounting.accountingMode())
+			if costAccounting.accountingMode() == "unknown" {
+				w.Header().Set("X-Freeride-Budget-Warning", "Cost unknown: configure workflowPricing or provider-reported usage; Gas Town dollar limits cannot account for these calls.")
 			}
 		}
 		// Translate based on protocol

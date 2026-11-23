@@ -2,71 +2,61 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestOpenRouterCostReservationAndProviderCaps(t *testing.T) {
-	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")
-	t.Setenv("FREERIDE_MAX_PROMPT_USD_PER_MILLION", "1")
-	t.Setenv("FREERIDE_MAX_COMPLETION_USD_PER_MILLION", "5")
+func TestOpenRouterCostAccountingDoesNotMutatePayload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
-	payload := []byte(`{"model":"sample","messages":[{"role":"user","content":"hello"}],"max_tokens":100,"provider":{"max_price":{"prompt":0.5}}}`)
-	bounded, err := applyOpenRouterWorkflowBudget("rig", "wf", path, payload)
-	if err != nil {
-		t.Fatal(err)
+	payload := []byte(`{"model":"sample","messages":[{"role":"user","content":"hello"}],"max_tokens":9000,"n":2,"plugins":[],"provider":{"max_price":{"prompt":0.5}}}`)
+	catalog := []openRouterModel{{ID: "sample"}}
+	catalog[0].Pricing.Prompt = "0.000001"
+	catalog[0].Pricing.Completion = "0.000002"
+	tracked, accounting := trackOpenRouterWorkflowCost("rig", "wf", path, payload, catalog)
+	if string(tracked) != string(payload) {
+		t.Fatalf("proxy mutated payload: %s", tracked)
+	}
+	if accounting == nil || accounting.unknownPricing || accounting.rates == nil {
+		t.Fatalf("missing accounting: %+v", accounting)
 	}
 	var body map[string]interface{}
-	if err := json.Unmarshal(bounded, &body); err != nil {
+	if err := json.Unmarshal(tracked, &body); err != nil {
 		t.Fatal(err)
 	}
-	prices := body["provider"].(map[string]interface{})["max_price"].(map[string]interface{})
-	if prices["prompt"] != 0.5 || prices["completion"] != float64(5) || prices["request"] != float64(0) {
-		t.Fatalf("caps=%v", prices)
+	if prices := body["provider"].(map[string]interface{})["max_price"].(map[string]interface{}); prices["prompt"] != 0.5 {
+		t.Fatalf("caller price cap was changed: %v", prices)
 	}
-	if _, err := applyOpenRouterWorkflowBudget("rig", "wf", path, payload); err == nil {
-		t.Fatal("second reservation exceeded dollar envelope")
+	if err := accounting.recordCost(0.00001); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := applyOpenRouterWorkflowBudget("rig", "wf", path, []byte(`{"model":"sample:free","messages":[],"max_tokens":100}`)); err != nil {
-		t.Fatalf("free route consumed dollar allowance: %v", err)
+	if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != 10 {
+		t.Fatalf("accounted %d, want 10", got)
 	}
 }
 
-func TestOpenRouterWorkflowDollarOverride(t *testing.T) {
-	t.Setenv("FREERIDE_WORKFLOW_MAX_COST_USD", "0.001")
+func TestOpenRouterFreeRouteAccountsZero(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "budget.json")
-	if err := os.WriteFile(path+".limits", []byte(`{"[\"rig\",\"wf\"]":10000000}`), 0600); err != nil {
-		t.Fatal(err)
+	_, accounting := trackOpenRouterWorkflowCost("rig", "wf", path, []byte(`{"model":"sample:free"}`), nil)
+	if accounting == nil || accounting.rates == nil {
+		t.Fatalf("free route not priced: %+v", accounting)
 	}
-	payload := []byte(`{"model":"sample","messages":[{"role":"user","content":"hello"}],"max_tokens":8192}`)
-	if _, err := applyOpenRouterWorkflowBudget("rig", "wf", path, payload); err != nil {
-		t.Fatalf("workflow override was not applied: %v", err)
-	}
-	if _, err := applyOpenRouterWorkflowBudget("rig", "wf", path, payload); err != nil {
-		t.Fatalf("override was not applied to subsequent reservations: %v", err)
+	accounting.accountResponse([]byte(`{}`))
+	if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != 0 {
+		t.Fatalf("free route accounted %d, want 0", got)
 	}
 }
 
-func TestOpenRouterCostPolicyRejectsUnaccountedCharges(t *testing.T) {
-	for _, payload := range []string{
-		`{"n":2}`, `{"plugins":[]}`, `{"messages":[{"content":[{"type":"image_url"}]}]}`, `{"tools":[{"type":"web_search"}]}`, `{"max_tokens":9000}`,
-	} {
-		if _, err := applyOpenRouterWorkflowBudget("rig", "wf", filepath.Join(t.TempDir(), "budget.json"), []byte(payload)); err == nil {
-			t.Fatalf("unbounded payload admitted: %s", payload)
-		}
+func TestOpenRouterCatalogPricesAreUsedForEstimates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "budget.json")
+	catalog := []openRouterModel{{ID: "sample"}}
+	catalog[0].Pricing.Prompt = "0.000001"
+	catalog[0].Pricing.Completion = "0.000002"
+	_, accounting := trackOpenRouterWorkflowCost("rig", "wf", path, []byte(`{"model":"sample"}`), catalog)
+	if accounting == nil || accounting.rates == nil {
+		t.Fatalf("catalog price not used: %+v", accounting)
 	}
-}
-
-func TestDollarAllowanceSharedAcrossWorkflowsOnSameRig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cost.json")
-	if err := reserveBudgetUnits(path, "rig", "wf-1", 60, 100, 100); err != nil {
-		t.Fatal(err)
-	}
-	if reserveBudgetUnits(path, "rig", "wf-2", 60, 100, 100) == nil {
-		t.Fatal("new workflow bypassed rig allowance")
-	}
-	if err := reserveBudgetUnits(path, "other", "wf-2", 60, 100, 100); err != nil {
-		t.Fatal(err)
+	accounting.accountResponse([]byte(`{"usage":{"prompt_tokens":100,"completion_tokens":10}}`))
+	if got := readCostLedger(t, path)[budgetKey("rig", "wf")]; got != 120 {
+		t.Fatalf("accounted %d, want 120", got)
 	}
 }

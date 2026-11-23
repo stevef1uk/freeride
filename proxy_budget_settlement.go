@@ -10,11 +10,8 @@ import (
 	"sync"
 )
 
-// Completed calls replace their admission reservation with provider-reported cost.
-// Missing usage or interrupted responses retain their reservation: billing is unknown.
-type workflowCostReservation struct {
+type workflowCostAccounting struct {
 	path, rig, workflow string
-	units               int64
 	mu                  sync.Mutex
 	settled             bool
 	rates               *workflowTokenPrice
@@ -23,11 +20,11 @@ type workflowCostReservation struct {
 	coverageWritten     bool
 }
 
-func (r *workflowCostReservation) settleCost(cost float64) error {
-	return r.settleCostWithKind(cost, "reported")
+func (r *workflowCostAccounting) recordCost(cost float64) error {
+	return r.recordCostWithKind(cost, "reported")
 }
 
-func (r *workflowCostReservation) settleCostWithKind(cost float64, kind string) error {
+func (r *workflowCostAccounting) recordCostWithKind(cost float64, kind string) error {
 	if r == nil {
 		return nil
 	}
@@ -42,12 +39,10 @@ func (r *workflowCostReservation) settleCostWithKind(cost float64, kind string) 
 	}
 	err := updateBudgetLedger(r.path, func(ledger map[string]int64) error {
 		for _, key := range []string{budgetKey(r.rig, r.workflow), budgetKey(r.rig)} {
-			if ledger[key] < r.units {
-				return fmt.Errorf("execution budget: reservation missing during settlement")
+			if ledger[key] < 0 {
+				return fmt.Errorf("execution budget: negative accounted cost")
 			}
-		}
-		for _, key := range []string{budgetKey(r.rig, r.workflow), budgetKey(r.rig)} {
-			ledger[key] = ledger[key] - r.units + actual
+			ledger[key] += actual
 		}
 		return nil
 	})
@@ -58,7 +53,7 @@ func (r *workflowCostReservation) settleCostWithKind(cost float64, kind string) 
 	return err
 }
 
-func (r *workflowCostReservation) settleResponse(body []byte) {
+func (r *workflowCostAccounting) accountResponse(body []byte) {
 	if r == nil {
 		return
 	}
@@ -76,33 +71,35 @@ func (r *workflowCostReservation) settleResponse(body []byte) {
 		raw = response.Groq.Usage
 	}
 	cost, kind, known := accountingCostFromUsage(raw, r.rates)
+	if known && (cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0)) {
+		known = false
+	}
 	if !known && r.rates != nil && *r.rates.Input == 0 && *r.rates.Output == 0 {
 		cost, kind, known = 0, "estimated", true
 	}
 	if !known {
 		return
 	}
-	if err := r.settleCostWithKind(cost, kind); err != nil {
-		log.Printf("[BUDGET] cost settlement failed for %s/%s: %v", r.rig, r.workflow, err)
+	if err := r.recordCostWithKind(cost, kind); err != nil {
+		log.Printf("[BUDGET] cost accounting failed for %s/%s: %v", r.rig, r.workflow, err)
 	}
 }
 
-// Observe SSE usage without changing streamed bytes or buffering the full answer.
-type budgetUsageBody struct {
+type usageAccountingBody struct {
 	io.ReadCloser
-	reservation *workflowCostReservation
-	line        []byte
-	oversized   bool
+	accounting *workflowCostAccounting
+	line       []byte
+	oversized  bool
 }
 
-func (b *budgetUsageBody) Read(p []byte) (int, error) {
+func (b *usageAccountingBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	for _, c := range p[:n] {
 		if c == '\n' {
 			if !b.oversized {
 				line := bytes.TrimSpace(b.line)
 				if bytes.HasPrefix(line, []byte("data:")) {
-					b.reservation.settleResponse(bytes.TrimSpace(line[5:]))
+					b.accounting.accountResponse(bytes.TrimSpace(line[5:]))
 				}
 			}
 			b.line = nil
@@ -117,14 +114,14 @@ func (b *budgetUsageBody) Read(p []byte) (int, error) {
 	if err == io.EOF && len(b.line) > 0 && !b.oversized {
 		line := bytes.TrimSpace(b.line)
 		if bytes.HasPrefix(line, []byte("data:")) {
-			b.reservation.settleResponse(bytes.TrimSpace(line[5:]))
+			b.accounting.accountResponse(bytes.TrimSpace(line[5:]))
 		}
 		b.line = nil
 	}
 	return n, err
 }
 
-func (r *workflowCostReservation) accountingMode() string {
+func (r *workflowCostAccounting) accountingMode() string {
 	if r == nil {
 		return "not applicable"
 	}
@@ -136,10 +133,10 @@ func (r *workflowCostReservation) accountingMode() string {
 	if r.unknownPricing {
 		return "unknown"
 	}
-	return "reserved"
+	return "pending"
 }
 
-func (r *workflowCostReservation) finishAccounting() {
+func (r *workflowCostAccounting) finishAccounting() {
 	if r == nil {
 		return
 	}
