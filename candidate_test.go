@@ -10,7 +10,7 @@ import (
 // in code), so tests must provide their own patterns.
 var testMassivePatterns = []string{
 	"671b", "550b", "397b", "235b", "1t", "120b", "large", "480b",
-	"405b", "90b", "80b", "70b", "30b", "sonnet", "gpt-4", "gpt-5.6",
+	"405b", "90b", "80b", "70b", "30b", "sonnet", "gpt-4", "gpt-5.6", "gpt-6",
 	"gemini", "opus", "deepseek-v4",
 }
 
@@ -573,7 +573,7 @@ func TestSelectCandidates_RolePrependBeforeOriginal(t *testing.T) {
 	const (
 		deepseek = "deepseek/deepseek-v4-flash"
 		cb120    = "cerebras/gpt-oss-120b"
-		gptLuna  = "openai/gpt-5.6-luna"
+		gptLuna  = "openai/gpt-6-luna"
 	)
 	prevCfg := globalModelsConfig
 	t.Cleanup(func() {

@@ -7,7 +7,7 @@ massiveOnlyRoles:
 
 # Extra substring patterns that classify a model as "massive" — fully config-driven,
 # no hardcoded list in Go. Lets massiveOnlyRoles routes use curated flagships
-# like openai/gpt-5.6-luna without code changes.
+# like openai/gpt-6-luna without code changes.
 massiveModelPatterns:
   - "671b"
   - "550b"
@@ -25,6 +25,7 @@ massiveModelPatterns:
   - "sonnet"
   - "gpt-4"
   - "gpt-5.6"
+  - "gpt-6"
   - "gemini"
   - "opus"
   - "deepseek-v4"
@@ -40,17 +41,17 @@ rolePrependBeforeOriginal:
 
 rolePrepend:
   polecat:
-    - "openai/gpt-5.6-luna"
+    - "openai/gpt-6-luna"
     - "cerebras/gpt-oss-120b"
     - "deepseek/deepseek-v4-flash"
   planner:
-    - "openai/gpt-5.6-luna"
+    - "openai/gpt-6-luna"
     - "deepseek/deepseek-v4-flash"
   architect:
-    - "openai/gpt-5.6-luna"
+    - "openai/gpt-6-luna"
     - "cerebras/gpt-oss-120b"
   qa:
-    - "openai/gpt-5.6-luna"
+    - "openai/gpt-6-luna"
     - "google/gemini-3.5-flash"
     - "google/gemini-2.5-flash-lite"
 
@@ -209,7 +210,7 @@ nvidiaComplex:
 # Models that should be tried even if they are paid (if --allow-paid is set)
 curatedPaid:
   - "deepseek/deepseek-v4-flash"             # $0.09 (In) / $0.18 (Out) per 1M — 284B MoE, 1M context
-  - "openai/gpt-5.6-luna"                    # $0.10 (In) / $0.60 (Out) per 1M — fast, 1M context, 128K output
+  - "openai/gpt-6-luna"                    # fast, 1M context, 128K output
   - "google/gemini-2.0-flash-001"            # $0.10 (In) / $0.40 (Out) per 1M
   - "openai/gpt-4o-mini"                     # $0.15 (In) / $0.60 (Out) per 1M
 

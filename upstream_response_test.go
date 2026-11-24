@@ -18,13 +18,13 @@ func TestUpstreamRequestTimeout(t *testing.T) {
 		name, model, value string
 		want               time.Duration
 	}{
-		{"cloud reasoning default", "openai/gpt-5.6-luna", "", 4 * time.Minute},
+		{"cloud reasoning default", "openai/gpt-6-luna", "", 4 * time.Minute},
 		{"local default", "local/timeout-test", "", 20 * time.Minute},
-		{"cloud override", "openai/gpt-5.6-luna", "90s", 90 * time.Second},
+		{"cloud override", "openai/gpt-6-luna", "90s", 90 * time.Second},
 		{"local override", "local/timeout-test", "5m", 5 * time.Minute},
-		{"invalid", "openai/gpt-5.6-luna", "bad", 4 * time.Minute},
-		{"zero", "openai/gpt-5.6-luna", "0s", 4 * time.Minute},
-		{"negative", "openai/gpt-5.6-luna", "-1s", 4 * time.Minute},
+		{"invalid", "openai/gpt-6-luna", "bad", 4 * time.Minute},
+		{"zero", "openai/gpt-6-luna", "0s", 4 * time.Minute},
+		{"negative", "openai/gpt-6-luna", "-1s", 4 * time.Minute},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("FREERIDE_UPSTREAM_TIMEOUT", tt.value)

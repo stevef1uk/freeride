@@ -8,7 +8,7 @@ massiveOnlyRoles:
 
 # Extra substring patterns that classify a model as "massive" — fully config-driven,
 # no hardcoded list in Go. Lets massiveOnlyRoles routes use curated flagships
-# like openai/gpt-5.6-luna without code changes.
+# like openai/gpt-6-luna without code changes.
 massiveModelPatterns:
   - "671b"
   - "550b"
@@ -26,6 +26,7 @@ massiveModelPatterns:
   - "sonnet"
   - "gpt-4"
   - "gpt-5.6"
+  - "gpt-6"
   - "gemini"
   - "opus"
   - "deepseek-v4"
@@ -85,7 +86,7 @@ rolePrepend:
     - "~deepseek/deepseek-v4-flash-latest"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
-    - "openai/gpt-5.6-luna" # shared-model last resort, enforced across all tiers
+    - "openai/gpt-6-luna" # shared-model last resort, enforced across all tiers
   setup:
     - "minimax/minimax-m3.1-flash:free"
     - "~deepseek/deepseek-v4-flash-latest"

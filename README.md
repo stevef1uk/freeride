@@ -1013,7 +1013,7 @@ massiveOnlyRoles: [architect, mayor, planner, polecat]
 rolePrependBeforeOriginal: [architect, planner, qa]
 rolePrepend:
   polecat: ["cerebras/gpt-oss-120b", "deepseek/deepseek-v4-flash"]  # only with --allow-paid; deepseek tried first
-  architect: ["openai/gpt-5.6-luna", "cerebras/gpt-oss-120b"]
+  architect: ["openai/gpt-6-luna", "cerebras/gpt-oss-120b"]
 
 # Priority 0.15: Google Gemini API free tier (requires GEMINI_API_KEY)
 geminiModels:

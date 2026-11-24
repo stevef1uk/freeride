@@ -2423,7 +2423,7 @@ func appendCerebrasPriorityCandidates(candidates []string, ctx candidateContext)
 		}
 	}
 	// With --allow-paid, polecat is routed strictly through its rolePrepend
-	// models (gpt-5.6-luna first), so skip Cerebras priority candidates for it
+	// models (gpt-6-luna first), so skip Cerebras priority candidates for it
 	// and let luna be tried first. Without --allow-paid, keep current behavior:
 	// polecat still uses the free Cerebras budget models on complex requests.
 	// Only applies when polecat's prepends are actually tried before its
@@ -2979,7 +2979,7 @@ func selectCandidatesBase(ctx candidateContext) []string {
 	// Always keep the user's explicitly requested model regardless of size heuristic,
 	// preserving its original position in the candidate list. Explicit rolePrepend
 	// entries (models.yaml rolePrepend) also survive the filter — they are curated
-	// per role (e.g. openai/gpt-5.6-luna for architect) even if the size heuristic
+	// per role (e.g. openai/gpt-6-luna for architect) even if the size heuristic
 	// doesn't classify them as "massive".
 	if roleRequiresMassiveModel(ctx.role) {
 		prepends := ctx.conf.RolePrepend[ctx.role]

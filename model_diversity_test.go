@@ -30,10 +30,10 @@ func TestPreferDifferentRoleModels(t *testing.T) {
 		RolePreferDifferentFrom:   map[string][]string{"qa": {"polecat", "planner", "tester"}},
 		RolePrependBeforeOriginal: []string{"polecat", "planner", "tester", "qa"},
 		RolePrepend: map[string][]string{
-			"polecat": {"openai/gpt-5.6-luna"},
-			"planner": {"openai/gpt-5.6-luna"},
-			"tester":  {"openai/gpt-5.6-luna"},
-			"qa":      {"google/gemini-3.6-flash", "deepseek/deepseek-v4-flash", "openai/gpt-5.6-luna"},
+			"polecat": {"openai/gpt-6-luna"},
+			"planner": {"openai/gpt-6-luna"},
+			"tester":  {"openai/gpt-6-luna"},
+			"qa":      {"google/gemini-3.6-flash", "deepseek/deepseek-v4-flash", "openai/gpt-6-luna"},
 		},
 	}
 	globalModelsConfig = conf
@@ -52,22 +52,22 @@ func TestPreferDifferentRoleModels(t *testing.T) {
 	}{
 		{
 			name: "priority tiers and provider aliases cannot bypass independence", role: "qa", allowPaid: true,
-			candidates: []string{"openai/gpt-oss-120b:free", "openai/gpt-5.6-luna", "google/gemini-3.6-flash", "deepseek/deepseek-v4-flash"},
-			want:       []string{"google/gemini-3.6-flash", "deepseek/deepseek-v4-flash", "openai/gpt-oss-120b:free", "openai/gpt-5.6-luna"},
+			candidates: []string{"openai/gpt-oss-120b:free", "openai/gpt-6-luna", "google/gemini-3.6-flash", "deepseek/deepseek-v4-flash"},
+			want:       []string{"google/gemini-3.6-flash", "deepseek/deepseek-v4-flash", "openai/gpt-oss-120b:free", "openai/gpt-6-luna"},
 		},
 		{
 			name: "curated independent choices lead unused provider priority", role: "qa", allowPaid: true,
-			candidates: []string{"cerebras/qwen-3-235b", "openai/gpt-5.6-luna", "google/gemini-3.6-flash", "deepseek/deepseek-v4-flash"},
-			want:       []string{"google/gemini-3.6-flash", "deepseek/deepseek-v4-flash", "cerebras/qwen-3-235b", "openai/gpt-5.6-luna"},
+			candidates: []string{"cerebras/qwen-3-235b", "openai/gpt-6-luna", "google/gemini-3.6-flash", "deepseek/deepseek-v4-flash"},
+			want:       []string{"google/gemini-3.6-flash", "deepseek/deepseek-v4-flash", "cerebras/qwen-3-235b", "openai/gpt-6-luna"},
 		},
 		{
 			name: "no alternative still permits shared model", role: "qa", allowPaid: true,
-			candidates: []string{"openai/gpt-5.6-luna"}, want: []string{"openai/gpt-5.6-luna"},
+			candidates: []string{"openai/gpt-6-luna"}, want: []string{"openai/gpt-6-luna"},
 		},
 		{
 			name: "other roles retain their ordering", role: "polecat", allowPaid: true,
-			candidates: []string{"openai/gpt-5.6-luna", "google/gemini-3.6-flash"},
-			want:       []string{"openai/gpt-5.6-luna", "google/gemini-3.6-flash"},
+			candidates: []string{"openai/gpt-6-luna", "google/gemini-3.6-flash"},
+			want:       []string{"openai/gpt-6-luna", "google/gemini-3.6-flash"},
 		},
 		{
 			name: "free mode still defers observed models", role: "qa",
