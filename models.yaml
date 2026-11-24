@@ -50,8 +50,8 @@ rolePrepend:
   # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
   # so planner/architect/qa use better models instead of looping on minimax:free.
   polecat:
-    - "minimax/minimax-m3.1-flash:free"
-    - "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    - "anthropic/claude-haiku-5.5"
+    - "google/gemini-3.6-flash"
     - "cloudflare/llama-3.3-70b"
   planner:
     - "anthropic/claude-haiku-5.5"
