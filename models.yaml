@@ -4,6 +4,7 @@ massiveOnlyRoles:
   - architect
   - planner
   - qa
+  - analyst
 
 # Extra substring patterns that classify a model as "massive" — fully config-driven,
 # no hardcoded list in Go. Lets massiveOnlyRoles routes use curated flagships
@@ -39,16 +40,21 @@ rolePrependBeforeOriginal:
   - polecat
   - tester
   - setup
+  - analyst
 
 # Prefer independent reviewers across the entire fallback chain. Models actually
 # used by these roles (and their paid-first primaries) move to QA's last-resort
 # tier; they remain available if all capable independent candidates fail.
 rolePreferDifferentFrom:
-  qa: [polecat, planner, tester, architect, setup]
+  qa: [polecat, planner, tester, architect, setup, analyst]
 
 rolePrepend:
   # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
   # so planner/architect/qa use better models instead of looping on minimax:free.
+  analyst:
+    - "anthropic/claude-haiku-5.5"
+    - "google/gemini-3.6-flash"
+    - "cloudflare/llama-3.3-70b"
   polecat:
     - "anthropic/claude-haiku-5.5"
     - "google/gemini-3.6-flash"
