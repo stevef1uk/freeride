@@ -28,6 +28,7 @@ massiveModelPatterns:
   - "gpt-5.6"
   - "gpt-6"
   - "gemini"
+  - "haiku"
   - "opus"
   - "deepseek-v4"
 
@@ -54,42 +55,43 @@ rolePrepend:
   # so planner/architect/qa use better models instead of looping on minimax:free.
   analyst:
     - "anthropic/claude-haiku-5.5"
-    - "google/gemini-3.6-flash"
+    - "deepseek/deepseek-v4-flash"
     - "cloudflare/llama-3.3-70b"
   polecat:
     - "anthropic/claude-haiku-5.5"
-    - "google/gemini-3.6-flash"
+    - "qwen/qwen3-coder-30b-a3b-instruct"
+    - "deepseek/deepseek-v4-flash"
     - "cloudflare/llama-3.3-70b"
   planner:
     - "anthropic/claude-haiku-5.5"
-    - "google/gemini-3.6-flash"
+    - "deepseek/deepseek-v4-flash"
     - "cloudflare/llama-3.3-70b"
   architect:
-    - "google/gemini-3.6-flash"
     - "anthropic/claude-haiku-5.5"
+    - "deepseek/deepseek-v4-flash"
+    - "google/gemini-2.5-flash-lite"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
   tester:
     - "anthropic/claude-haiku-5.5"
-    - "google/gemini-3.6-flash"
+    - "deepseek/deepseek-v4-flash"
     - "cloudflare/llama-3.3-70b"
   qa:
     # Keep the structured-outcome reviewer on DeepSeek; GLM returned empty
     # assistant content for design_review (2026-11-18).
     - "~deepseek/deepseek-v4-flash-latest"
     - "anthropic/claude-haiku-5.5"
-    - "deepseek/deepseek-v4.1-flash"
+    - "deepseek/deepseek-v4-flash"
     - "nvidia/nemotron-3.5-super-vl-120b-a12b"
     - "minimax/minimax-m3.1-flash"
-    - "google/gemini-3.6-flash"
-    - "google/gemini-3.5-flash"
-    - "~deepseek/deepseek-v4-flash-latest"
+    - "google/gemini-2.5-flash-lite"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
     - "openai/gpt-6-luna" # shared-model last resort, enforced across all tiers
   setup:
     - "minimax/minimax-m3.1-flash:free"
     - "~deepseek/deepseek-v4-flash-latest"
+    - "anthropic/claude-haiku-5.5"
     - "cloudflare/llama-3.3-70b"
 
 # OpenRouter free-model ranking boosts (substring match on model id)
@@ -222,14 +224,20 @@ groqPerformance:
 modelExtraBody:
   groq/openai/gpt-oss-120b:
     reasoning_effort: "low"
+  deepseek/deepseek-v4.1-flash:
+    reasoning:
+      effort: "none"
+  deepseek/deepseek-v4-flash:
+    reasoning:
+      effort: "none"
 
 # Priority 1: Verified working free/paid models (OpenRouter)
 reliableFree:
   - "minimax/minimax-m3.1-flash:free"
   - "dots-studio/dots-3-note-preview:free"
   - "qwen/qwen3.8-27b"
-  - "google/gemma-4-26b-a4b-it"
-  - "google/gemma-4-31b-it"
+  - "google/gemma-4-26b-a4b-it:free"
+  - "google/gemma-4-31b-it:free"
   - "poolside/laguna-s-2.1"
   - "poolside/laguna-xs-2.1"
   - "cohere/north-mini-code:free"
