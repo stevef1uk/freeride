@@ -55,33 +55,32 @@ rolePrepend:
   # so planner/architect/qa use better models instead of looping on minimax:free.
   analyst:
     - "anthropic/claude-haiku-5.5"
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "cloudflare/llama-3.3-70b"
   polecat:
     - "anthropic/claude-haiku-5.5"
     - "qwen/qwen3-coder-30b-a3b-instruct"
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "cloudflare/llama-3.3-70b"
   planner:
     - "anthropic/claude-haiku-5.5"
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "cloudflare/llama-3.3-70b"
   architect:
     - "anthropic/claude-haiku-5.5"
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "google/gemini-2.5-flash-lite"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
   tester:
     - "anthropic/claude-haiku-5.5"
-    - "deepseek/deepseek-v4-flash"
+    - "~deepseek/deepseek-v4-flash-latest"
     - "cloudflare/llama-3.3-70b"
   qa:
     # Keep the structured-outcome reviewer on DeepSeek; GLM returned empty
     # assistant content for design_review (2026-11-18).
     - "~deepseek/deepseek-v4-flash-latest"
     - "anthropic/claude-haiku-5.5"
-    - "deepseek/deepseek-v4-flash"
     - "nvidia/nemotron-3.5-super-vl-120b-a12b"
     - "minimax/minimax-m3.1-flash"
     - "google/gemini-2.5-flash-lite"
@@ -228,6 +227,9 @@ modelExtraBody:
     reasoning:
       effort: "none"
   deepseek/deepseek-v4-flash:
+    reasoning:
+      effort: "none"
+  "~deepseek/deepseek-v4-flash-latest":
     reasoning:
       effort: "none"
 
