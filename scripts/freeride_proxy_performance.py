@@ -36,8 +36,16 @@ _PROVIDER_PREFIXES = (
     "google/",
     "openai/",
     "z-ai/",
+    "dots-studio/",
+    "minimax/",
+    "cohere/",
+    "anthropic/",
+    "poolside/",
+    "thinkingmachines/",
+    "qwen/",
+    "ollama/",
 )
-_MODEL_SUFFIXES = ("-latest", "-0731", "-free")
+_MODEL_SUFFIXES = ("-latest", "-0731", "-free", ":free")
 
 def canonical_model_id(model: str) -> str:
     normalized = model.strip().lower().lstrip("~")
@@ -154,8 +162,9 @@ def print_table(interval_name: str, attempts: Counter, completions: Counter, tps
         w_comp = max(w_comp, len(str(completions[m])))
         w_att = max(w_att, len(str(attempts[m])))
         tps_key = canonical_model_id(m)
-        if has_tps and tps_key in tps_data:
-            w_tps = max(w_tps, len(f"{tps_data[tps_key]:.1f}"))
+        tps_val = tps_data.get(tps_key, tps_data.get(m.strip().lower())) if (has_tps and tps_data) else None
+        if tps_val is not None:
+            w_tps = max(w_tps, len(f"{tps_val:.1f}"))
 
     if has_tps:
         sep = f"+-{'-' * w_model}-+-{'-' * w_comp}-+-{'-' * w_att}-+-{'-' * w_rate}-+-{'-' * w_tps}-+"
@@ -183,8 +192,8 @@ def print_table(interval_name: str, attempts: Counter, completions: Counter, tps
         cells = [m, str(c), str(a), rate]
         if has_tps:
             tps_key = canonical_model_id(m)
-            if tps_key in tps_data:
-                tps_val = tps_data[tps_key]
+            tps_val = tps_data.get(tps_key, tps_data.get(m.strip().lower())) if tps_data else None
+            if tps_val is not None:
                 cells.append(f"{tps_val:.1f}")
                 total_tps_sum += tps_val
                 total_tps_count += 1
@@ -261,6 +270,49 @@ def print_throughput(results: dict) -> None:
     print()
 
 
+def parse_proxy_throughput(lines: list[str]) -> dict[str, float]:
+    attempt_re = re.compile(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) Attempting request with model: ([^\s(]+)")
+    success_re = re.compile(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) Model ([^\s]+) succeeded")
+
+    current_req = None
+    samples = {}
+
+    for i, line in enumerate(lines):
+        m_att = attempt_re.search(line)
+        if m_att:
+            try:
+                dt = datetime.strptime(m_att.group(1), "%Y/%m/%d %H:%M:%S")
+                model = m_att.group(2)
+                current_req = (dt, model)
+            except ValueError:
+                pass
+            continue
+        m_succ = success_re.search(line)
+        if m_succ and current_req:
+            try:
+                dt = datetime.strptime(m_succ.group(1), "%Y/%m/%d %H:%M:%S")
+                model = m_succ.group(2)
+                if model == current_req[1]:
+                    dur_s = (dt - current_req[0]).total_seconds()
+                    tokens = 0
+                    for j in range(i + 1, min(i + 35, len(lines))):
+                        if '"completion_tokens":' in lines[j]:
+                            m_tok = re.search(r'"completion_tokens":\s*(\d+)', lines[j])
+                            if m_tok:
+                                tokens = int(m_tok.group(1))
+                                break
+                    if tokens > 0 and dur_s > 0.1:
+                        tps = tokens / dur_s
+                        canon = canonical_model_id(model)
+                        samples.setdefault(canon, []).append(tps)
+                        samples.setdefault(model.strip().lower(), []).append(tps)
+            except ValueError:
+                pass
+            current_req = None
+
+    return {m: sum(s) / len(s) for m, s in samples.items() if s}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Print freeride proxy upstream model performance over time."
@@ -309,6 +361,13 @@ def main() -> None:
         avg = {}
         for m, samples in tps_all.items():
             avg[m] = sum(samples) / len(samples)
+
+        # Fall back to proxy log throughput for any models not captured in session logs
+        proxy_tps = parse_proxy_throughput(lines)
+        for k, v in proxy_tps.items():
+            if k not in avg:
+                avg[k] = v
+
         if avg:
             tps_per_interval["All Time"] = avg
 
