@@ -48,7 +48,7 @@ rolePrependBeforeOriginal:
 # used by these roles (and their paid-first primaries) move to QA's last-resort
 # tier; they remain available if all capable independent candidates fail.
 rolePreferDifferentFrom:
-  qa: [polecat, planner, tester, architect, setup, analyst]
+  qa: [polecat, planner, tester, architect, analyst]
 
 rolePrepend:
   # Paid-first when --allow-paid (Option B): try flagship paid before free fallback,
@@ -69,7 +69,7 @@ rolePrepend:
   architect:
     - "anthropic/claude-haiku-5.5"
     - "~deepseek/deepseek-v4-flash-latest"
-    - "google/gemini-2.5-flash-lite"
+    - "minimax/minimax-m3.1-flash"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
   tester:
@@ -80,10 +80,9 @@ rolePrepend:
     # Keep the structured-outcome reviewer on DeepSeek; GLM returned empty
     # assistant content for design_review (2026-11-18).
     - "~deepseek/deepseek-v4-flash-latest"
+    - "minimax/minimax-m3.1-flash"
     - "anthropic/claude-haiku-5.5"
     - "nvidia/nemotron-3.5-super-vl-120b-a12b"
-    - "minimax/minimax-m3.1-flash"
-    - "google/gemini-2.5-flash-lite"
     - "minimax/minimax-m3.1-flash:free"
     - "cloudflare/qwen-2.5-coder-32b"
     - "openai/gpt-6-luna" # shared-model last resort, enforced across all tiers
@@ -298,6 +297,7 @@ curatedPaid:
 
 # Models to exclude (broken, deprecated, or rate-limited)
 excludeModels:
+  - "google/gemini-2.5-flash-lite"        # TOO WEAK / Hallucinates on agent QA review tasks
   - "google/gemma-4-26b-a4b-it:free"      # Currently broken 401
   - "deepseek/deepseek-v3:free"           # 400 Invalid model ID
   - "nvidia/llama-3.1-70b-instruct"       # 404 Not Found
