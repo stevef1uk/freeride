@@ -563,7 +563,10 @@ func estimatePromptTokens(body map[string]interface{}) int {
 	if chars == 0 {
 		return 0
 	}
-	return chars
+	// Code and text average ~3.5-4 chars/token in BPE tokenizers.
+	// Budget conservatively at 2 chars/token (0.5 tokens/char) so local
+	// models with 48k context are not falsely skipped on prompts that easily fit.
+	return (chars + 1) / 2
 }
 
 // capLocalRequestContext lowers max_tokens so prompt + generation fits llama-server -c.
@@ -578,9 +581,9 @@ func capLocalRequestContext(body map[string]interface{}, contextSlots int) bool 
 		log.Printf("[LOCAL] skip local: prompt est ~%d exceeds ctx=%d (no room for max_tokens)", promptEst, ctx)
 		return false
 	}
-	// Polecat replies are usually short CMD/EDIT blocks; avoid reserving 4096 on tight ctx.
-	if room > 1024 {
-		room = 1024
+	// Polecat replies are usually short CMD/EDIT blocks; allow up to 4096 on large ctx.
+	if room > 4096 {
+		room = 4096
 	}
 	var requested float64 = 4096
 	if mt, ok := body["max_tokens"].(float64); ok {
@@ -631,7 +634,7 @@ func isBlockedSmallCloudWhenLocalGPU(model string) bool {
 	if !localGPUEnabled() {
 		return false
 	}
-	if isGeminiDirectModelID(model) {
+	if isGeminiDirectModelID(model) || strings.HasPrefix(strings.ToLower(model), "local/") {
 		return false
 	}
 	configMutex.RLock()

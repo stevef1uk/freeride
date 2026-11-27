@@ -433,6 +433,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				} else if strings.Contains(targetURL, "cerebras.ai") && mt > 8192 {
 					log.Printf("[CAP] Cerebras max_tokens %.0f → 8192", mt)
 					currentBody["max_tokens"] = float64(8192)
+				} else if strings.Contains(targetURL, "openrouter.ai") && mt > 1024 {
+					log.Printf("[CAP] OpenRouter max_tokens %.0f → 1024", mt)
+					currentBody["max_tokens"] = float64(1024)
 				}
 			}
 			outboundBody, _ = json.Marshal(currentBody)
@@ -566,7 +569,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				isInsufficientCredits := strings.Contains(lowerBody, "insufficient credit") ||
 					strings.Contains(lowerBody, "insufficient balance") ||
 					strings.Contains(lowerBody, "insufficient_quota") ||
-					strings.Contains(lowerBody, "out of credit")
+					strings.Contains(lowerBody, "out of credit") ||
+					strings.Contains(lowerBody, "rate limit exceeded: free-models-per-day") ||
+					strings.Contains(lowerBody, "openrouter_free_tier_daily")
 
 				if isInsufficientCredits {
 					markCustomCooldown(candidate, time.Hour)
