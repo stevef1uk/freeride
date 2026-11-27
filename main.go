@@ -433,9 +433,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				} else if strings.Contains(targetURL, "cerebras.ai") && mt > 8192 {
 					log.Printf("[CAP] Cerebras max_tokens %.0f → 8192", mt)
 					currentBody["max_tokens"] = float64(8192)
-				} else if strings.Contains(targetURL, "openrouter.ai") && mt > 1024 {
-					log.Printf("[CAP] OpenRouter max_tokens %.0f → 1024", mt)
-					currentBody["max_tokens"] = float64(1024)
+				} else if strings.Contains(targetURL, "openrouter.ai") && mt > 4096 {
+					log.Printf("[CAP] OpenRouter max_tokens %.0f → 4096", mt)
+					currentBody["max_tokens"] = float64(4096)
 				}
 			}
 			outboundBody, _ = json.Marshal(currentBody)
@@ -714,12 +714,19 @@ func promoteReasoningContent(message map[string]interface{}) bool {
 	}
 	// Fall back to a final JSON outcome object some roles end with.
 	if idx < 0 {
-		if i := strings.LastIndex(reasoning, `{"outcome"`); i >= 0 {
-			idx = i
+		if i := strings.LastIndex(reasoning, `"outcome"`); i >= 0 {
+			if open := strings.LastIndex(reasoning[:i], "{"); open >= 0 {
+				idx = open
+			} else {
+				idx = i
+			}
 		}
 	}
 	if idx < 0 {
-		return false
+		// When no explicit action marker is found, promote the full reasoning string
+		// so that conversational answers, reviews, and JSON blocks are not discarded as empty replies.
+		message["content"] = strings.TrimSpace(reasoning)
+		return true
 	}
 
 	// Rewind to the start of the line so a multi-line action payload

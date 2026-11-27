@@ -51,9 +51,10 @@ func TestPromoteReasoningContent(t *testing.T) {
 			wantContent:  "{\"outcome\":\"success\",\"summary\":\"ok\"}",
 		},
 		{
-			name:         "reasoning without action marker unchanged",
+			name:         "reasoning without action marker promoted as fallback",
 			message:      map[string]interface{}{"content": "", "reasoning": "just thinking out loud, no actions here"},
-			wantPromoted: false,
+			wantPromoted: true,
+			wantContent:  "just thinking out loud, no actions here",
 		},
 	}
 

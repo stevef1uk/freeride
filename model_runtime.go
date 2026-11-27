@@ -658,7 +658,13 @@ func isExcluded(model string) bool {
 	defer configMutex.RUnlock()
 	lowerModel := strings.ToLower(model)
 	for _, m := range globalModelsConfig.ExcludeModels {
-		if strings.ToLower(m) == lowerModel {
+		entry := strings.ToLower(strings.TrimSpace(m))
+		if strings.HasSuffix(entry, "*") {
+			prefix := strings.TrimSuffix(entry, "*")
+			if strings.HasPrefix(lowerModel, prefix) {
+				return true
+			}
+		} else if entry == lowerModel {
 			return true
 		}
 	}
