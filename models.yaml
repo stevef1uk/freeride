@@ -240,8 +240,6 @@ reliableFree:
   - "poolside/laguna-s-2.1"
   - "poolside/laguna-xs-2.1"
   - "cohere/north-mini-code:free"
-  - "thinkingmachines/inkling"
-  - "thinkingmachines/inkling-small"
   - "openrouter/free"
 
 # Priority 2: Reliable NVIDIA NIM models (verified chat/completions 2026-10-20)
@@ -275,12 +273,8 @@ zaiModels:
   - id: "z-ai/glm-5.2-flash"
     model: "glm-5.2-flash"
 
-# Thinking Machines models — open-weight multimodal MoE (free tier)
-thinkingMachinesModels:
-  - id: "thinkingmachines/inkling"
-    model: "inkling"
-  - id: "thinkingmachines/inkling-small"
-    model: "inkling-small"
+# Thinking Machines models — disabled (paid on OpenRouter, not free)
+thinkingMachinesModels: []
 
 # OpenRouter Free Router — auto-selects free models
 openrouterFreeRouter:
@@ -310,6 +304,8 @@ excludeModels:
   - "nvidia/nvidia-nemotron-nano-9b-v2"    # ~45% flaky nano
   - "nvidia/llama-3.1-nemotron-51b-instruct"
   - "mistralai/mistral-nemo"           # failing on agent tasks
+  # Thinking Machines models — expensive ($1.00/$4.05 per 1M) on OpenRouter
+  - "thinkingmachines/*"
   # Ollama cloud-subscription routes — require paid ollama.com account (excluded by wildcard)
   - "ollama/*"
   - "groq/openai/gpt-oss-120b"            # 8000 TPM limit on Groq causes 413 on prompt context >8k tokens
